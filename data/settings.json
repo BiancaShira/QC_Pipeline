@@ -30,7 +30,7 @@
     {
       "match": "SF24_103",
       "model_paths": [
-        "C:\\Users\\BiancaWachira\\Desktop\\disk b\\QC_AUTOMATION-WORKSPACE\\auto_orientation_master\\Model\\best_model.pth"
+        "C:\\Users\\BiancaWachira\\Downloads\\qcc_pipeline\\qcc_pipeline\\Model\\best_model.pth"
       ],
       "name": "SF24_103"
     }
@@ -57,7 +57,7 @@
     "chain_crop_to_autofill": false
   },
   "ollama": {
-    "enabled": false,
+    "enabled": true,
     "base_url": "http://localhost:11434",
     "model": "qwen3.5:cloud",
     "trigger": "low_confidence",

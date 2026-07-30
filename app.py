@@ -92,7 +92,6 @@ def _run_job(job_id, kind, batches, threshold, update_status, db_creds, settings
         job['files_done_current'] = 0
         job['files_total_current'] = 0
 
-        # Retrieve per‑batch creds if stored (multiple servers)
         batch_db_creds = batch.get('_server_creds', db_creds)
 
         if not batch_dir or not Path(batch_dir).exists():
@@ -189,18 +188,16 @@ def _run_job(job_id, kind, batches, threshold, update_status, db_creds, settings
     _log(job, f"Job finished with status: {job['status']}")
     ACTIVE_STAGE_JOB[kind] = None
 
-    # Chaining
+    # -------------------------------------------------------------------------
+    # ORDER CHANGE: Chain Rotation → Auto-Fill (skipping Crop)
+    # -------------------------------------------------------------------------
     chain_map = settings.get('scheduler', {})
     if kind == 'rotation' and job['status'] == 'done' and completed_batches and chain_map.get('chain_rotation_to_crop'):
-        _log(job, f"Chaining {len(completed_batches)} batch(es) into Auto-Crop...")
-        crop_threshold = settings.get('_chain_crop_threshold', 100)
-        _start_job('crop', completed_batches, crop_threshold, update_status, db_creds,
-                   config_store.load(), trigger_label=f"chained from rotation job {job_id}", extra_params={})
-    elif kind == 'crop' and job['status'] == 'done' and completed_batches and chain_map.get('chain_crop_to_autofill'):
-        _log(job, f"Chaining {len(completed_batches)} batch(es) into Auto-Fill...")
+        _log(job, f"Chaining {len(completed_batches)} batch(es) into Auto-Fill (skipping Crop)...")
         fill_threshold = settings.get('_chain_fill_threshold', 60)
         _start_job('autofill', completed_batches, fill_threshold, update_status, db_creds,
-                   config_store.load(), trigger_label=f"chained from crop job {job_id}", extra_params={})
+                   config_store.load(), trigger_label=f"chained from rotation job {job_id}", extra_params={})
+    # "Crop -> Auto-Fill" chain is REMOVED per your request
 
 
 def _start_job(kind, batches, threshold, update_status, db_creds, settings, trigger_label='manual', extra_params=None):
@@ -612,4 +609,4 @@ def api_scheduler_status():
 if __name__ == '__main__':
     scheduler.start()
     debug = os.environ.get('QCC_DEBUG', '0') == '1'
-    app.run(host='0.0.0.0', port=5000, debug=debug, use_reloader=False)
+    app.run(host='0.0.0.0', port=8000, debug=debug, use_reloader=False)
