@@ -1,0 +1,74 @@
+{
+  "pipeline": {
+    "rotation": {
+      "in_status": "Scan Complete",
+      "out_status": "Auto Rotate-complete",
+      "out_code": 15,
+      "status_column": "StatusText"
+    },
+    "crop": {
+      "in_status": "Auto Rotate-complete",
+      "out_status": "Ready for Quality Control",
+      "out_code": 20,
+      "status_column": "StatusText"
+    },
+    "autofill": {
+      "in_status": "Auto Rotate-complete",
+      "out_status": "Ready For Quality Control",
+      "out_code": 22,
+      "status_column": "StatusText"
+    }
+  },
+  "orientation_models": [
+    {
+      "match": "SF24",
+      "model_paths": [
+        "C:\\Users\\BiancaWachira\\Desktop\\disk b\\QC_AUTOMATION-WORKSPACE\\auto_orientation_master\\Model\\best_model.pth"
+      ],
+      "name": "SF24"
+    },
+    {
+      "match": "SF24_103",
+      "model_paths": [
+        "C:\\Users\\BiancaWachira\\Desktop\\disk b\\QC_AUTOMATION-WORKSPACE\\auto_orientation_master\\Model\\best_model.pth"
+      ],
+      "name": "SF24_103"
+    }
+  ],
+  "scheduler": {
+    "rotation": {
+      "enabled": false,
+      "interval_minutes": 30,
+      "batch_count_trigger": 0,
+      "threshold": 100
+    },
+    "crop": {
+      "enabled": false,
+      "interval_minutes": 30,
+      "batch_count_trigger": 0,
+      "threshold": 100
+    },
+    "autofill": {
+      "enabled": false,
+      "interval_minutes": 30,
+      "batch_count_trigger": 0
+    },
+    "chain_rotation_to_crop": false,
+    "chain_crop_to_autofill": false
+  },
+  "ollama": {
+    "enabled": false,
+    "base_url": "http://localhost:11434",
+    "model": "qwen3.5:cloud",
+    "trigger": "low_confidence",
+    "confidence_threshold": 0.55,
+    "timeout_seconds": 45
+  },
+  "theme": "dark",
+  "db_last": {
+    "server": "192.168.1.93\\SQLEXPRESS",
+    "driver": "ODBC Driver 17 for SQL Server",
+    "uid": "sa",
+    "database": "KCAA_AIRTRANSPORT2"
+  }
+}
