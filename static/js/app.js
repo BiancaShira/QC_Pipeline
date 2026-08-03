@@ -632,12 +632,29 @@
 
   // ---- orientation model profiles ----
   let profileRowsData = [];
-  function renderProfiles(profiles) {
-    profileRowsData = profiles.map(p => ({ ...p, model_paths: (p.model_paths || []) }));
-    const host = $('profileRows');
-    host.innerHTML = '';
-    profileRowsData.forEach((p, idx) => host.appendChild(profileRow(p, idx)));
-  }
+
+  function populateDocTypeOverride(profiles) {
+  const sel = $('rot-docTypeOverride');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Use batch\'s own DocumentType / default profile</option>';
+  profiles.forEach(p => {
+    if (!p.name && !p.match) return;
+    const opt = document.createElement('option');
+    opt.value = p.match || p.name;
+    opt.textContent = p.match ? `${p.name} (${p.match})` : p.name;
+    sel.appendChild(opt);
+  });
+  if ([...sel.options].some(o => o.value === current)) sel.value = current;
+}
+
+function renderProfiles(profiles) {
+  profileRowsData = profiles.map(p => ({ ...p, model_paths: (p.model_paths || []) }));
+  const host = $('profileRows');
+  host.innerHTML = '';
+  profileRowsData.forEach((p, idx) => host.appendChild(profileRow(p, idx)));
+  populateDocTypeOverride(profileRowsData);   // <-- add this line
+}
   function profileRow(p, idx) {
     const row = document.createElement('div');
     row.className = 'profile-row';

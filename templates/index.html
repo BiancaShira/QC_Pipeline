@@ -134,9 +134,11 @@
       <section class="panel rot hidden" id="rot-panel-actions">
         <div class="panel-head"><span class="eyebrow">03</span><h3>Rotate &amp; run</h3></div>
         <div class="grid-form">
-          <label>Document type override <span class="hint">(optional -- matched against Settings model profiles; blank = use each batch's own DocumentType / default profile)</span>
-            <input type="text" id="rot-docTypeOverride" placeholder="e.g. Invoices">
-          </label>
+         <label>Document type override <span class="hint">(optional -- matched against Settings model profiles; blank = use each batch's own DocumentType / default profile)</span>
+  <select id="rot-docTypeOverride">
+    <option value="">Use batch's own DocumentType / default profile</option>
+  </select>
+</label>
           <label>Preview sample size<input type="number" id="rot-sampleSize" min="1" max="20" value="6"></label>
         </div>
         <label class="checkbox-row">
