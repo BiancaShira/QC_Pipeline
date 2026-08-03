@@ -105,3 +105,5 @@ class Scheduler:
             reason = f"timer ({interval_minutes}m)" if due_by_timer else f"batch count ({batch_count}/{count_trigger})"
             logger.info(f"Scheduler auto-triggering {kind} on {len(batches)} batch(es) -- {reason}")
             self._start_stage_run(kind, batches, reason)
+
+

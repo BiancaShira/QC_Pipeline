@@ -1,4 +1,5 @@
-from utils.helpers import count_images
+from utils.image_utils import count_images
+LAST_DB_CREDS = {'server': None, 'driver': None, 'database': None, 'uid': None, 'pwd': None}
 
 def _connect(server, driver, uid, pwd, database="master", timeout=8):
     import pyodbc
@@ -115,3 +116,8 @@ def distinct_statuses(server, driver, database, uid, pwd, status_column="StatusT
         return [row[0] for row in cursor.fetchall()]
     finally:
         conn.close()
+
+
+def _parse_servers(server_str):
+    """Split comma-separated server list, strip whitespace."""
+    return [s.strip() for s in server_str.split(',') if s.strip()]
