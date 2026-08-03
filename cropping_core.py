@@ -9,7 +9,7 @@ import logging
 import shutil
 import time
 from pathlib import Path
-from utils.helpers import list_images , count_images , BACKUP_DIR_NAME , IMAGE_EXTS
+from utils.image_utils import list_images , count_images , BACKUP_DIR_NAME , IMAGE_EXTS
 from db import *
 import cv2
 import numpy as np

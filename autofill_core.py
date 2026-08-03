@@ -17,7 +17,7 @@ from cropping_core import BACKUP_DIR_NAME, IMAGE_EXTS, list_images, make_thumb_b
 
 logger = logging.getLogger("qcc_autocrop")
 
-DARK_THRESHOLD = 60
+DARK_THRESHOLD = 45
 MAX_BLOB_AREA_RATIO = 0.35
 FILL_COLOR = (255, 255, 255)
 
