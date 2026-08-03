@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from utils.log import _log
 
 from flask import Flask, jsonify, render_template, request, Response
 
@@ -53,12 +54,7 @@ def _new_job(kind, batches):
     return job_id
 
 
-def _log(job, line):
-    stamped = f"{time.strftime('%H:%M:%S')}  {line}"
-    job['log'].append(stamped)
-    if len(job['log']) > 500:
-        job['log'] = job['log'][-500:]
-    logger.info(f"[{job['kind']}] {line}")
+
 
 
 def _resolve_model_paths(settings, document_type):

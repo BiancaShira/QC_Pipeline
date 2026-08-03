@@ -9,15 +9,13 @@ import logging
 import shutil
 import time
 from pathlib import Path
-
+from utils.helpers import list_images , count_images , BACKUP_DIR_NAME , IMAGE_EXTS
+from db import *
 import cv2
 import numpy as np
 from PIL import Image
 
 logger = logging.getLogger("qcc_autocrop")
-
-IMAGE_EXTS = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp')
-BACKUP_DIR_NAME = "QCCBackups"
 
 
 # ---------------------------------------------------------------------------
@@ -118,30 +116,8 @@ def make_thumb_b64(pil_img, max_dim=380):
 # Filesystem helpers
 # ---------------------------------------------------------------------------
 
-def list_images(batch_dir):
-    """All images under batch_dir, excluding anything inside QCCBackups."""
-    batch_dir = Path(batch_dir)
-    backup_dir = (batch_dir / BACKUP_DIR_NAME).resolve()
-    out = []
-    if not batch_dir.exists():
-        return out
-    for p in sorted(batch_dir.rglob('*')):
-        if not p.is_file() or p.suffix.lower() not in IMAGE_EXTS:
-            continue
-        try:
-            if backup_dir in p.resolve().parents:
-                continue
-        except OSError:
-            continue
-        out.append(p)
-    return out
 
 
-def count_images(batch_dir):
-    try:
-        return len(list_images(batch_dir))
-    except Exception:
-        return 0
 
 
 def discover_batches_from_folder(parent_folder):
@@ -314,114 +290,8 @@ def process_batch_with_backup(batch_dir, threshold=100, progress_cb=None, cancel
 # SQL Server helpers with status column support
 # ---------------------------------------------------------------------------
 
-def _connect(server, driver, uid, pwd, database="master", timeout=8):
-    import pyodbc
-    conn_str = (
-        f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};"
-        f"UID={uid};PWD={pwd}"
-    )
-    return pyodbc.connect(conn_str, timeout=timeout)
+from db import _connect
 
-
-def list_server_databases(server, driver, uid, pwd):
-    conn = _connect(server, driver, uid, pwd, database="master")
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name")
-        return [row[0] for row in cursor.fetchall()]
-    finally:
-        conn.close()
-
-
-def get_batches_from_db(server, driver, database, uid, pwd,
-                        status_filter="Ready For Quality Control",
-                        status_column="StatusText"):
-    """
-    Fetch batches with given status_filter on the specified status_column.
-    Also tries to get DocumentType; falls back gracefully if column missing.
-    """
-    conn = _connect(server, driver, uid, pwd, database=database)
-    try:
-        cursor = conn.cursor()
-        has_doc_type = True
-        try:
-            cursor.execute(
-                f"""
-                SELECT BatchID, BatchName, BatchDirectory, DocumentType
-                FROM batchtable
-                WHERE {status_column} = ?
-                """,
-                status_filter,
-            )
-            rows = cursor.fetchall()
-        except Exception:
-            has_doc_type = False
-            cursor.execute(
-                f"""
-                SELECT BatchID, BatchName, BatchDirectory
-                FROM batchtable
-                WHERE {status_column} = ?
-                """,
-                status_filter,
-            )
-            rows = cursor.fetchall()
-
-        out = []
-        for r in rows:
-            batch_dir = r.BatchDirectory
-            out.append({
-                'BatchID': r.BatchID,
-                'BatchName': r.BatchName,
-                'BatchDirectory': batch_dir,
-                'DocumentType': (getattr(r, 'DocumentType', None) if has_doc_type else None),
-                'ImageCount': count_images(batch_dir) if batch_dir else 0,
-            })
-        return out
-    finally:
-        conn.close()
-
-
-def count_batches_from_db(server, driver, database, uid, pwd,
-                          status_filter, status_column="StatusText"):
-    conn = _connect(server, driver, uid, pwd, database=database)
-    try:
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT COUNT(*) FROM batchtable WHERE {status_column} = ?", status_filter)
-        row = cursor.fetchone()
-        return int(row[0]) if row else 0
-    finally:
-        conn.close()
-
-
-def update_batch_status(server, driver, database, uid, pwd, batch_id,
-                        status_text="Cropped", status_code=20,
-                        status_column="StatusText"):
-    conn = _connect(server, driver, uid, pwd, database=database)
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            f"""
-            UPDATE batchtable
-            SET {status_column} = ?, Status = ?, UserNameLock = '', ProcessNameLock = ''
-            WHERE BatchID = ?
-            """,
-            status_text, status_code, batch_id,
-        )
-        conn.commit()
-        return True
-    finally:
-        conn.close()
-
-
-def distinct_statuses(server, driver, database, uid, pwd, status_column="StatusText"):
-    """Fetch distinct values from the given status column."""
-    conn = _connect(server, driver, uid, pwd, database=database)
-    try:
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT DISTINCT {status_column} FROM batchtable ORDER BY {status_column}")
-        return [row[0] for row in cursor.fetchall()]
-    finally:
-        conn.close()
 
 
 def format_time(seconds):

@@ -66,8 +66,8 @@
   },
   "theme": "dark",
   "db_last": {
-    "server": "192.168.1.93\\SQLEXPRESS",
-    "driver": "ODBC Driver 17 for SQL Server",
+    "server": "127.0.0.1",
+    "driver": "ODBC Driver 18 for SQL Server",
     "uid": "sa",
     "database": "KCAA_AIRTRANSPORT2"
   }
