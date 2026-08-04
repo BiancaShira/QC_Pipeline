@@ -39,6 +39,8 @@ import orientation_core as oc
 import autofill_core as afc
 import reports_store
 import ollama_selective_rotate as osr
+from utils.state import ACTIVE_STAGE_JOB, JOBS, JOBS_LOCK , LAST_DB_CREDS , STAGE_DB_CREDS
+from utils.helpers import _scheduler_get_creds, _start_job, scheduler, _resolve_model_paths
 from scheduler import Scheduler
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -46,14 +48,14 @@ logger = logging.getLogger("qcc_autocrop")
 
 app = Flask(__name__)
 
-JOBS = {}
-JOBS_LOCK = threading.Lock()
-ACTIVE_STAGE_JOB = {'rotation': None, 'crop': None, 'autofill': None}
+# JOBS = {}
+# JOBS_LOCK = threading.Lock()
+# ACTIVE_STAGE_JOB = {'rotation': None, 'crop': None, 'autofill': None}
 
 # One saved connection PER STAGE. Replaces the old single global
 # LAST_DB_CREDS, which is why you used to only ever effectively have "one"
 # database no matter which of the three panels you filled in.
-STAGE_DB_CREDS = {'rotation': None, 'crop': None, 'autofill': None}
+
 
 
 def _new_job(kind, batches):

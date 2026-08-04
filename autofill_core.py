@@ -166,11 +166,13 @@ def process_batch_with_backup(batch_dir, threshold=DARK_THRESHOLD,
         try:
             if backup_path.exists():
                 stats['already_backed_up'] += 1
+                source_path = img_path      # already backed up -- read the current (rotated/cropped) file
             else:
                 shutil.move(str(img_path), str(backup_path))
                 stats['moved_to_backup'] += 1
+                source_path = backup_path   # first stage to touch this file -- read the original just moved here
 
-            success, status, detail = fill_damage(str(backup_path), str(img_path), threshold)
+            success, status, detail = fill_damage(str(source_path), str(img_path), threshold)
             if not success:
                 stats['filled_failed'] += 1
                 stats['errors'].append(f"{rel}: {detail}")

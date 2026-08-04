@@ -23,7 +23,7 @@
     {
       "match": "SF24-Model",
       "model_paths": [
-        "C:\\Users\\BiancaWachira\\Downloads\\qcc_pipeline\\qcc_pipeline\\Model\\best_model.pth"
+        "/home/kabwoy/Desktop/disi-projects/qcc-v3/QC_Pipeline/Model/best_model.pth"
       ],
       "name": "SF24-Model"
     }
@@ -46,7 +46,7 @@
       "interval_minutes": 1,
       "batch_count_trigger": 0
     },
-    "rotation_next": "none",
+    "rotation_next": "autofill",
     "after_rotation_continue": "none"
   },
   "ollama": {
