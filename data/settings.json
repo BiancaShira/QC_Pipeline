@@ -23,30 +23,9 @@
     {
       "match": "SF24",
       "model_paths": [
-        "C:\\Users\\BiancaWachira\\Desktop\\disk b\\QC_AUTOMATION-WORKSPACE\\auto_orientation_master\\Model\\best_model.pth"
+        "/home/kabwoy/Desktop/disi-projects/qc_v1/QC_Pipeline/Model/best_model.pth"
       ],
       "name": "SF24"
-    },
-    {
-      "match": "SF24_103",
-      "model_paths": [
-        "C:\\Users\\BiancaWachira\\Downloads\\qcc_pipeline\\qcc_pipeline\\Model\\best_model.pth"
-      ],
-      "name": "SF24_103"
-    },
-    {
-      "match": "SF50",
-      "model_paths": [
-        "/home/kabwoy/Desktop/disi-projects/batches/batch1/QCCBackups/10000266.jpg /home/kabwoy/Desktop/disi-projects/batches/batch1/QCCBackups/10000267.jpg /home/kabwoy/Desktop/disi-projects/batches/batch1/QCCBackups/10000268.jpg /home/kabwoy/Desktop/disi-projects/batches/batch1/QCCBackups/10000269.jpg /home/kabwoy/Desktop/disi-projects/batches/batch1/QCCBackups/10000270.jpg"
-      ],
-      "name": "SF50"
-    },
-    {
-      "match": "a20",
-      "model_paths": [
-        "/home/kabwoy/Desktop/disi-projects/batches/batch1"
-      ],
-      "name": "af20"
     }
   ],
   "scheduler": {

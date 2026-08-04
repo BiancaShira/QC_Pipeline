@@ -44,6 +44,11 @@
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Automation &amp; Settings
       </button>
+
+      <button class="nav-btn" data-view="addmodels">
+  <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20v-6M12 4v4M4 12h4m8 0h4"/><circle cx="12" cy="12" r="9"/></svg>
+  Add Models
+</button>
     </nav>
 
     <div class="sidebar-foot">
@@ -433,6 +438,32 @@
     <!-- ================================================================ -->
     <!-- SETTINGS / AUTOMATION VIEW                                        -->
     <!-- ================================================================ -->
+
+    <main class="view hidden" id="view-addmodels">
+
+  <section class="panel">
+    <div class="panel-head"><span class="eyebrow">MODEL</span><h3>Add model</h3></div>
+    <p class="inline-msg">Register a new orientation model checkpoint. It will also appear in Settings &#8594; Orientation models, and as an option in the Auto-Rotation document type override.</p>
+    <div class="grid-form">
+      <label>Model name<input name="model_name" type="text" id="addmodel-name" placeholder="e.g. Invoices"></label>
+      <label>Model path<input name="model_path" type="text" id="addmodel-path" placeholder="/home/kabwoy/Desktop/disi-projects/qc_v1/QC_Pipeline/Models/invoices.pt"></label>
+    </div>
+    <div class="row-actions">
+      <button class="btn btn-acc-solid" id="btnAddModelQuick">Add model</button>
+      <span class="inline-msg" id="addModelMsg"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><span class="eyebrow">LIST</span><h3>Registered models</h3></div>
+    <div id="addModelsList"></div>
+    <div class="row-actions">
+      <button class="btn btn-acc-solid" id="btnSaveAddModels">Save all</button>
+      <span class="inline-msg" id="addModelsSaveMsg"></span>
+    </div>
+  </section>
+
+</main>
     <main class="view hidden" id="view-settings">
 
       <section class="panel">
@@ -582,5 +613,6 @@
 <div class="toast" id="toastHost"></div>
 
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/model.js') }}"></script>
 </body>
 </html>
