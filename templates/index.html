@@ -40,15 +40,14 @@
         Auto-Fill
         <span class="badge" id="navFillBadge">0</span>
       </button>
+      <button class="nav-btn" data-view="reports">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6"/><path d="M9 11h6"/></svg>
+        Reports
+      </button>
       <button class="nav-btn" data-view="settings">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Automation &amp; Settings
       </button>
-
-      <button class="nav-btn" data-view="addmodels">
-  <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20v-6M12 4v4M4 12h4m8 0h4"/><circle cx="12" cy="12" r="9"/></svg>
-  Add Models
-</button>
     </nav>
 
     <div class="sidebar-foot">
@@ -104,8 +103,11 @@
                 </select>
               </label>
               <label class="text-inline">Status filter (input status)
-                <input type="text" id="rot-dbStatusFilter" value="Blank Page Removal">
+                <input type="text" id="rot-dbStatusFilter" value="Blank Page Removal" list="rot-statusList" autocomplete="off">
+                <datalist id="rot-statusList"></datalist>
               </label>
+              <label class="text-inline">JobID <input type="text" id="rot-dbBatchId" placeholder="optional" style="width:90px;"></label>
+              <label class="text-inline">JobName contains <input type="text" id="rot-dbBatchName" placeholder="optional" style="width:140px;"></label>
               <button class="btn btn-acc2" id="rot-btnDbListBatches">List batches</button>
               <span class="inline-msg" id="rot-dbBatchesMsg"></span>
             </div>
@@ -159,6 +161,21 @@
           <button class="btn btn-acc2-solid" id="rot-btnRun">Run rotation &amp; write to disk</button>
         </div>
         <p class="warn-note">Run mode moves every original image into <code>QCCBackups</code> inside its batch folder first, then rotates from that backup copy back into the image's original location. Nothing is deleted. If "chain to Auto-Crop" is enabled in Settings, finished batches are handed straight to the crop stage.</p>
+      </section>
+
+      <section class="panel rot" id="rot-panel-selective">
+        <div class="panel-head"><span class="eyebrow">OPT</span><h3>Selective rotation by prompt (Ollama)</h3></div>
+        <p class="inline-msg">Optional step, run on one batch at a time after regular rotation. Describe what to find, e.g. "identify all pages with a table" or "find pages with a mostly green image" -- preview the matches, then rotate only those.</p>
+        <div class="grid-form">
+          <label>Batch directory <span class="hint">(pick a batch above, or paste a path)</span><input type="text" id="rot-selectiveBatchDir" placeholder="F:\SAMPLES\Batch123"></label>
+          <label>Prompt<input type="text" id="rot-selectivePrompt" placeholder="identify all pages with a table"></label>
+        </div>
+        <div class="row-actions">
+          <button class="btn btn-acc2" id="rot-btnSelectivePreview">Preview matches</button>
+          <button class="btn btn-acc2-solid" id="rot-btnSelectiveApply" disabled>Rotate matched pages</button>
+          <span class="inline-msg" id="rot-selectiveMsg"></span>
+        </div>
+        <div class="preview-grid" id="rot-selectiveResults"></div>
       </section>
 
       <section class="panel rot hidden" id="rot-panel-preview">
@@ -231,8 +248,11 @@
                 </select>
               </label>
               <label class="text-inline">Status filter (input status)
-                <input type="text" id="crop-dbStatusFilter" value="Ready For Auto Crop">
+                <input type="text" id="crop-dbStatusFilter" value="Ready For Auto Crop" list="crop-statusList" autocomplete="off">
+                <datalist id="crop-statusList"></datalist>
               </label>
+              <label class="text-inline">JobID <input type="text" id="crop-dbBatchId" placeholder="optional" style="width:90px;"></label>
+              <label class="text-inline">JobName contains <input type="text" id="crop-dbBatchName" placeholder="optional" style="width:140px;"></label>
               <button class="btn btn-acc" id="crop-btnDbListBatches">List batches</button>
               <span class="inline-msg" id="crop-dbBatchesMsg"></span>
             </div>
@@ -350,8 +370,11 @@
                 </select>
               </label>
               <label class="text-inline">Status filter (input status)
-                <input type="text" id="fill-dbStatusFilter" value="Auto Rotate-complete">
+                <input type="text" id="fill-dbStatusFilter" value="Auto Rotate-complete" list="fill-statusList" autocomplete="off">
+                <datalist id="fill-statusList"></datalist>
               </label>
+              <label class="text-inline">JobID <input type="text" id="fill-dbBatchId" placeholder="optional" style="width:90px;"></label>
+              <label class="text-inline">JobName contains <input type="text" id="fill-dbBatchName" placeholder="optional" style="width:140px;"></label>
               <button class="btn btn-acc2" id="fill-btnDbListBatches">List batches</button>
               <span class="inline-msg" id="fill-dbBatchesMsg"></span>
             </div>
@@ -438,32 +461,6 @@
     <!-- ================================================================ -->
     <!-- SETTINGS / AUTOMATION VIEW                                        -->
     <!-- ================================================================ -->
-
-    <main class="view hidden" id="view-addmodels">
-
-  <section class="panel">
-    <div class="panel-head"><span class="eyebrow">MODEL</span><h3>Add model</h3></div>
-    <p class="inline-msg">Register a new orientation model checkpoint. It will also appear in Settings &#8594; Orientation models, and as an option in the Auto-Rotation document type override.</p>
-    <div class="grid-form">
-      <label>Model name<input name="model_name" type="text" id="addmodel-name" placeholder="e.g. Invoices"></label>
-      <label>Model path<input name="model_path" type="text" id="addmodel-path" placeholder="/home/kabwoy/Desktop/disi-projects/qc_v1/QC_Pipeline/Models/invoices.pt"></label>
-    </div>
-    <div class="row-actions">
-      <button class="btn btn-acc-solid" id="btnAddModelQuick">Add model</button>
-      <span class="inline-msg" id="addModelMsg"></span>
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-head"><span class="eyebrow">LIST</span><h3>Registered models</h3></div>
-    <div id="addModelsList"></div>
-    <div class="row-actions">
-      <button class="btn btn-acc-solid" id="btnSaveAddModels">Save all</button>
-      <span class="inline-msg" id="addModelsSaveMsg"></span>
-    </div>
-  </section>
-
-</main>
     <main class="view hidden" id="view-settings">
 
       <section class="panel">
@@ -513,14 +510,13 @@
             </div>
           </div>
         </div>
-        <!-- MODIFIED LABEL HERE -->
-        <label class="checkbox-row" style="margin-top:6px;">
-          <input type="checkbox" id="set-chain-rot-crop">
-          Chain Rotation → Auto-Fill (Skips Crop)
-        </label>
-        <label class="checkbox-row">
-          <input type="checkbox" id="set-chain-crop-fill">
-          Chain Crop → Auto-Fill
+        <label class="text-inline" style="margin-top:10px; display:block;">
+          After Rotation, continue to:
+          <select id="set-rotation-next">
+            <option value="none">Nothing (manual)</option>
+            <option value="crop">Auto-Crop</option>
+            <option value="autofill">Auto-Fill</option>
+          </select>
         </label>
         <div class="row-actions"><button class="btn btn-acc-solid" id="btnSavePipeline">Save pipeline settings</button><span class="inline-msg" id="pipelineSaveMsg"></span></div>
       </section>
@@ -555,7 +551,12 @@
           </div>
         </div>
 
-        <p class="warn-note">Automation only works while a database connection has been made this session -- folder mode has no status column to poll, so it stays manual. The scheduler checks every 20s in the background; a stage already mid-run is skipped until it finishes.</p>
+        <p class="warn-note">Each stage above polls its OWN database connection -- connect on that stage's "Select batch source" panel (Database mode) at least once; the connection is remembered per stage. Folder mode has no status column to poll, so it stays manual. The scheduler checks every 20s in the background; a stage already mid-run is skipped until it finishes.</p>
+        <div class="grid-form cols-3" id="schedDbStatusRow" style="margin-top:8px;">
+          <span class="inline-msg">Rotation DB: <strong id="schedDbStatusRot">unknown</strong></span>
+          <span class="inline-msg">Crop DB: <strong id="schedDbStatusCrop">unknown</strong></span>
+          <span class="inline-msg">Auto-Fill DB: <strong id="schedDbStatusFill">unknown</strong></span>
+        </div>
         <div class="row-actions"><button class="btn btn-acc-solid" id="btnSaveScheduler">Save scheduler settings</button><span class="inline-msg" id="schedSaveMsg"></span></div>
       </section>
 
@@ -594,6 +595,47 @@
           <span class="inline-msg" id="ollamaMsg"></span>
         </div>
       </section>
+
+      <section class="panel">
+        <div class="panel-head"><span class="eyebrow">OLLAMA</span><h3>Ollama fallback for selective/prompt-driven rotation</h3></div>
+        <p class="inline-msg">Separate from the fallback above -- this is the optional, on-demand step (run from the Rotation view) that finds specific pages by a free-text prompt (e.g. "pages with a table") and rotates only those. Independent on/off switch so enabling one never enables the other.</p>
+        <label class="checkbox-row"><input type="checkbox" id="set-ollama-selective-enabled">Enable selective/prompt-driven rotation</label>
+        <div class="grid-form cols-3">
+          <label>Model name<input type="text" id="set-ollama-selective-model" placeholder="qwen2.5vl"></label>
+        </div>
+        <div class="row-actions">
+          <button class="btn btn-acc-solid" id="btnSaveOllamaSelective">Save settings</button>
+          <span class="inline-msg" id="ollamaSelectiveMsg"></span>
+        </div>
+      </section>
+    </main>
+
+    <!-- ================================================================ -->
+    <!-- REPORTS VIEW                                                      -->
+    <!-- ================================================================ -->
+    <main class="view hidden" id="view-reports">
+      <section class="panel">
+        <div class="panel-head"><span class="eyebrow">REPORTS</span><h3>Run history</h3></div>
+        <p class="inline-msg">Every run -- manual, chained, or scheduler-triggered -- persisted to disk. Survives a restart.</p>
+        <div class="row-actions">
+          <label class="text-inline">Stage
+            <select id="reportsStage">
+              <option value="">All</option>
+              <option value="rotation">Rotation</option>
+              <option value="crop">Crop</option>
+              <option value="autofill">Auto-Fill</option>
+            </select>
+          </label>
+          <button class="btn btn-acc2" id="btnReportsRefresh">Refresh</button>
+          <a class="btn btn-ghost" id="btnReportsCsv" href="/api/reports/csv">Download CSV</a>
+        </div>
+        <div class="results-table-wrap">
+          <table class="results-table" id="reportsTable">
+            <thead><tr><th>Stage</th><th>Batch</th><th>Status</th><th>Trigger</th><th>When</th></tr></thead>
+            <tbody id="reportsBody"></tbody>
+          </table>
+        </div>
+      </section>
     </main>
 
   </div>
@@ -613,6 +655,5 @@
 <div class="toast" id="toastHost"></div>
 
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
-<script src="{{ url_for('static', filename='js/model.js') }}"></script>
 </body>
 </html>

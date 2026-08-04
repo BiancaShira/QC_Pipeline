@@ -3,6 +3,17 @@ scheduler.py
 ------------
 Background thread that checks each stage (rotation, crop, autofill) for
 auto-run conditions.
+
+CHANGE in this version:
+  `get_db_creds` is now called PER STAGE: `self._get_db_creds(kind)` instead
+  of `self._get_db_creds()`. Previously one shared connection was polled for
+  all three stages, which meant connecting a database for one stage silently
+  switched (or broke) the other two. app.py now supplies a per-stage lookup.
+
+  Tick frequency is unchanged (CHECK_EVERY_SECONDS = 20) -- that's the
+  "checks every few minutes" behaviour that was already correct; each
+  stage's own `interval_minutes` / `batch_count_trigger` in Settings decides
+  whether that tick actually does anything.
 """
 import logging
 import threading
@@ -14,9 +25,10 @@ import cropping_core as cc
 logger = logging.getLogger("qcc_autocrop")
 CHECK_EVERY_SECONDS = 20
 
+
 class Scheduler:
     def __init__(self, get_db_creds, get_stage_busy, start_stage_run):
-        self._get_db_creds = get_db_creds
+        self._get_db_creds = get_db_creds  # now: get_db_creds(kind) -> creds dict | None
         self._get_stage_busy = get_stage_busy
         self._start_stage_run = start_stage_run
         self._last_auto_run = {'rotation': 0.0, 'crop': 0.0, 'autofill': 0.0}
@@ -50,7 +62,6 @@ class Scheduler:
     def _tick(self):
         settings = config_store.load()
         sched = settings['scheduler']
-        creds = self._get_db_creds()
 
         for kind in ('rotation', 'crop', 'autofill'):
             cfg = sched.get(kind, {})
@@ -59,8 +70,10 @@ class Scheduler:
                 continue
             if self._get_stage_busy(kind):
                 continue
+
+            creds = self._get_db_creds(kind)
             if not creds:
-                self._last_check_error[kind] = "no active database connection to poll"
+                self._last_check_error[kind] = f"no database connected for the {kind} stage"
                 continue
 
             in_status = settings['pipeline'][kind]['in_status']
@@ -104,6 +117,4 @@ class Scheduler:
 
             reason = f"timer ({interval_minutes}m)" if due_by_timer else f"batch count ({batch_count}/{count_trigger})"
             logger.info(f"Scheduler auto-triggering {kind} on {len(batches)} batch(es) -- {reason}")
-            self._start_stage_run(kind, batches, reason)
-
-
+            self._start_stage_run(kind, batches, reason, creds)

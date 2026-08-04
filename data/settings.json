@@ -8,12 +8,12 @@
     },
     "crop": {
       "in_status": "Auto Rotate-complete",
-      "out_status": "Ready for Quality Control",
+      "out_status": "Auto Crop-Complete",
       "out_code": 20,
       "status_column": "StatusText"
     },
     "autofill": {
-      "in_status": "Auto Rotate-complete",
+      "in_status": "Auto Crop-complete",
       "out_status": "Ready For Quality Control",
       "out_code": 22,
       "status_column": "StatusText"
@@ -21,33 +21,32 @@
   },
   "orientation_models": [
     {
-      "match": "SF24",
+      "match": "SF24-Model",
       "model_paths": [
-        "/home/kabwoy/Desktop/disi-projects/qc_v1/QC_Pipeline/Model/best_model.pth"
+        "C:\\Users\\BiancaWachira\\Downloads\\qcc_pipeline\\qcc_pipeline\\Model\\best_model.pth"
       ],
-      "name": "SF24"
+      "name": "SF24-Model"
     }
   ],
   "scheduler": {
     "rotation": {
       "enabled": false,
-      "interval_minutes": 30,
+      "interval_minutes": 1,
       "batch_count_trigger": 0,
       "threshold": 100
     },
     "crop": {
       "enabled": false,
-      "interval_minutes": 30,
+      "interval_minutes": 1,
       "batch_count_trigger": 0,
       "threshold": 100
     },
     "autofill": {
       "enabled": false,
-      "interval_minutes": 30,
+      "interval_minutes": 1,
       "batch_count_trigger": 0
     },
-    "chain_rotation_to_crop": true,
-    "chain_crop_to_autofill": false,
+    "rotation_next": "none",
     "after_rotation_continue": "none"
   },
   "ollama": {
@@ -56,14 +55,36 @@
     "model": "qwen3.5:cloud",
     "trigger": "low_confidence",
     "confidence_threshold": 0.55,
-    "timeout_seconds": 45
+    "timeout_seconds": 45,
+    "selective_enabled": true,
+    "selective_model": "qwen3.5:cloud"
   },
   "theme": "dark",
   "db_last": {
-    "server": "192.168.1.12",
-    "driver": "ODBC Driver 18 for SQL Server",
+    "server": "192.168.1.2",
+    "driver": "ODBC Driver 17 for SQL Server",
     "uid": "sa",
-    "database": "Refunds"
+    "database": "SIB"
+  },
+  "db_connections": {
+    "rotation": {
+      "server": "192.168.1.2",
+      "driver": "ODBC Driver 17 for SQL Server",
+      "uid": "sa",
+      "database": "Nssf_PhaseVI"
+    },
+    "crop": {
+      "server": "192.168.1.12",
+      "driver": "ODBC Driver 17 for SQL Server",
+      "uid": "sa",
+      "database": "SF_DOCUMENTS"
+    },
+    "autofill": {
+      "server": "",
+      "driver": "ODBC Driver 17 for SQL Server",
+      "uid": "",
+      "database": ""
+    }
   },
   "ai_rotation": {
     "enabled": false,

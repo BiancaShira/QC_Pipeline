@@ -1,5 +1,25 @@
 """
 QCC Pipeline -- Flask UI around cropping_core.py + orientation_core.py + autofill_core.py
+
+CHANGES in this version (see DOCUMENTATION.md for the full writeup):
+  1. STAGE_DB_CREDS replaces the single global LAST_DB_CREDS. Each stage
+     (rotation/crop/autofill) now keeps its own last-connected DB creds, and
+     the scheduler polls each stage with ITS OWN creds instead of whichever
+     stage connected most recently. This was the root cause of "two places
+     to fill in" / scheduler cross-talk / status-fetch failures.
+  2. /api/db/batches accepts an optional `stage` field to know which
+     stage's slot to remember the connection in, and optional `batch_id` /
+     `batch_name` filters (schema-safe, allow-listed columns only -- see
+     db.search_batches).
+  3. Rotation branching is now settings['scheduler']['rotation_next'] =
+     "none" | "crop" | "autofill" (one dropdown), replacing the two
+     chain_* booleans.
+  4. Every finished job is persisted via reports_store.record_job(), and
+     /api/reports (+ /api/reports/csv) exposes the combined, restart-proof
+     history, filterable by stage.
+  5. New endpoints for the prompt-driven Ollama selective rotation
+     (ollama_selective_rotate.py): /api/ollama/selective/preview and
+     /api/ollama/selective/apply.
 """
 import os
 import csv
@@ -17,22 +37,23 @@ import config_store
 import cropping_core as cc
 import orientation_core as oc
 import autofill_core as afc
-from db import _parse_servers,LAST_DB_CREDS
-from utils.state import ACTIVE_STAGE_JOB , JOBS , JOBS_LOCK
-from utils.helpers import _scheduler_get_creds , _start_job , scheduler
-# from utils.helpers import _start_job
-
+import reports_store
+import ollama_selective_rotate as osr
+from scheduler import Scheduler
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("qcc_autocrop")
 
 app = Flask(__name__)
-CORS(app) 
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 ACTIVE_STAGE_JOB = {'rotation': None, 'crop': None, 'autofill': None}
-LAST_DB_CREDS = {'server': None, 'driver': None, 'database': None, 'uid': None, 'pwd': None}
+
+# One saved connection PER STAGE. Replaces the old single global
+# LAST_DB_CREDS, which is why you used to only ever effectively have "one"
+# database no matter which of the three panels you filled in.
+STAGE_DB_CREDS = {'rotation': None, 'crop': None, 'autofill': None}
 
 
 def _new_job(kind, batches):
@@ -57,9 +78,6 @@ def _new_job(kind, batches):
     with JOBS_LOCK:
         JOBS[job_id] = job
     return job_id
-
-
-
 
 
 def _resolve_model_paths(settings, document_type):
@@ -189,16 +207,24 @@ def _run_job(job_id, kind, batches, threshold, update_status, db_creds, settings
     _log(job, f"Job finished with status: {job['status']}")
     ACTIVE_STAGE_JOB[kind] = None
 
+    # Persist this run to disk so it survives a restart and shows up in the
+    # Reports tab, regardless of how it was triggered.
+    try:
+        reports_store.record_job(job)
+    except Exception as e:
+        logger.warning(f"Failed to persist report for job {job_id}: {e}")
+
     # -------------------------------------------------------------------------
-    # ORDER CHANGE: Chain Rotation → Auto-Fill (skipping Crop)
+    # Rotation branching -- single explicit choice instead of two checkboxes.
+    # settings['scheduler']['rotation_next'] is one of: "none", "crop", "autofill".
     # -------------------------------------------------------------------------
-    chain_map = settings.get('scheduler', {})
-    if kind == 'rotation' and job['status'] == 'done' and completed_batches and chain_map.get('chain_rotation_to_crop'):
-        _log(job, f"Chaining {len(completed_batches)} batch(es) into Auto-Fill (skipping Crop)...")
-        fill_threshold = settings.get('_chain_fill_threshold', 60)
-        _start_job('autofill', completed_batches, fill_threshold, update_status, db_creds,
+    rotation_next = settings.get('scheduler', {}).get('rotation_next', 'none')
+    if kind == 'rotation' and job['status'] == 'done' and completed_batches and rotation_next in ('crop', 'autofill'):
+        _log(job, f"Chaining {len(completed_batches)} batch(es) into {rotation_next}...")
+        next_threshold = (settings.get('_chain_crop_threshold', 100) if rotation_next == 'crop'
+                         else settings.get('_chain_fill_threshold', 60))
+        _start_job(rotation_next, completed_batches, next_threshold, update_status, db_creds,
                    config_store.load(), trigger_label=f"chained from rotation job {job_id}", extra_params={})
-    # "Crop -> Auto-Fill" chain is REMOVED per your request
 
 
 def _start_job(kind, batches, threshold, update_status, db_creds, settings, trigger_label='manual', extra_params=None):
@@ -219,19 +245,22 @@ def _start_job(kind, batches, threshold, update_status, db_creds, settings, trig
 # Scheduler wiring
 # ---------------------------------------------------------------------------
 
-def _scheduler_get_creds():
-    if LAST_DB_CREDS.get('server') and LAST_DB_CREDS.get('database'):
-        return dict(LAST_DB_CREDS)
+def _scheduler_get_creds(kind):
+    """Per-stage lookup -- this is what the scheduler now calls for each of
+    rotation/crop/autofill independently, instead of one shared global."""
+    creds = STAGE_DB_CREDS.get(kind)
+    if creds and creds.get('server') and creds.get('database'):
+        return dict(creds)
     return None
 
 def _scheduler_stage_busy(kind):
     return ACTIVE_STAGE_JOB.get(kind) is not None
 
-def _scheduler_start_run(kind, batches, reason):
+def _scheduler_start_run(kind, batches, reason, creds):
     settings = config_store.load()
     threshold = settings.get('_chain_crop_threshold', 100) if kind == 'crop' else \
                 settings.get('_chain_fill_threshold', 60) if kind == 'autofill' else 100
-    _start_job(kind, batches, threshold, update_status=True, db_creds=_scheduler_get_creds(),
+    _start_job(kind, batches, threshold, update_status=True, db_creds=creds,
                settings=settings, trigger_label=f"auto ({reason})", extra_params={})
 
 scheduler = Scheduler(_scheduler_get_creds, _scheduler_stage_busy, _scheduler_start_run)
@@ -272,7 +301,7 @@ def api_theme():
 
 
 # ---------------------------------------------------------------------------
-# Ollama test
+# Ollama test (per-page orientation fallback, pre-existing)
 # ---------------------------------------------------------------------------
 
 @app.route('/api/ollama/test', methods=['POST'])
@@ -292,7 +321,55 @@ def api_ollama_test():
 
 
 # ---------------------------------------------------------------------------
-# Database source – with multiple servers support
+# Ollama selective rotation (new -- prompt-driven, per-batch, optional step)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/ollama/selective/preview', methods=['POST'])
+def api_ollama_selective_preview():
+    """Read-only. Runs the batch against a free-text prompt and returns
+    which pages matched + suggested rotation. Nothing is written to disk."""
+    data = request.get_json(force=True) or {}
+    batch_dir = data.get('batch_directory')
+    prompt = (data.get('prompt') or '').strip()
+    if not batch_dir or not Path(batch_dir).exists():
+        return jsonify({'ok': False, 'error': 'batch_directory is required and must exist'}), 400
+    if not prompt:
+        return jsonify({'ok': False, 'error': 'prompt is required, e.g. "identify all pages with a table"'}), 400
+
+    settings = config_store.load()
+    ollama_cfg = settings.get('ollama', {})
+    base_url = data.get('base_url') or ollama_cfg.get('base_url', 'http://localhost:11434')
+    model = data.get('model') or ollama_cfg.get('selective_model', 'qwen2.5vl')
+    sample_size = data.get('sample_size')  # None = whole batch
+
+    try:
+        result = osr.select_batch(batch_dir, prompt, base_url, model, sample_size=sample_size)
+        return jsonify({'ok': True, **result})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ollama/selective/apply', methods=['POST'])
+def api_ollama_selective_apply():
+    """Rotates only the pages the caller confirms (normally: the 'matched'
+    list echoed back from /preview, after the user has reviewed it)."""
+    data = request.get_json(force=True) or {}
+    batch_dir = data.get('batch_directory')
+    matched = data.get('matched') or []
+    if not batch_dir or not Path(batch_dir).exists():
+        return jsonify({'ok': False, 'error': 'batch_directory is required and must exist'}), 400
+    if not matched:
+        return jsonify({'ok': False, 'error': 'matched is required -- pass the list from /preview'}), 400
+
+    try:
+        stats = osr.apply_selection(batch_dir, matched)
+        return jsonify({'ok': True, **stats})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Database source -- per-stage connections, multiple servers per stage
 # ---------------------------------------------------------------------------
 
 def _parse_servers(server_str):
@@ -313,14 +390,11 @@ def api_db_test():
     if not servers:
         return jsonify({'ok': False, 'error': "No valid server names."}), 400
 
-    # Try first server to list databases (assume all servers have same DBs, or we just need one)
     try:
         dbs = cc.list_server_databases(servers[0], driver, uid, pwd)
     except Exception as e:
         return jsonify({'ok': False, 'error': f"Connection to {servers[0]} failed: {e}"}), 500
 
-    LAST_DB_CREDS.update({'server': server_str, 'driver': driver, 'uid': uid, 'pwd': pwd})
-    config_store.update({'db_last': {'server': server_str, 'driver': driver, 'uid': uid}})
     return jsonify({'ok': True, 'databases': dbs})
 
 
@@ -344,26 +418,48 @@ def api_db_distinct():
 
 @app.route('/api/db/batches', methods=['POST'])
 def api_db_batches():
+    """
+    Fetch batches for a stage. `stage` (rotation/crop/autofill) tells the
+    backend which STAGE_DB_CREDS slot to remember this connection in, so
+    the scheduler can later poll each stage independently.
+
+    Optional `batch_id` / `batch_name` add extra allow-listed filters on
+    top of status -- all combine with AND.
+    """
     data = request.get_json(force=True) or {}
     required = ['server', 'driver', 'database', 'uid', 'pwd']
     missing = [f for f in required if not data.get(f)]
     if missing:
         return jsonify({'ok': False, 'error': f"Missing: {', '.join(missing)}"}), 400
 
+    stage = data.get('stage')
+    if stage not in (None, 'rotation', 'crop', 'autofill'):
+        return jsonify({'ok': False, 'error': "stage must be 'rotation', 'crop', or 'autofill'"}), 400
+
     server_str = data['server']
     servers = _parse_servers(server_str)
-    status_filter = data.get('status_filter', 'Ready For Quality Control')
+    status_filter = data.get('status_filter') or None
     status_column = data.get('status_column', 'StatusText')
+    batch_id = (data.get('batch_id') or '').strip() or None
+    batch_name = (data.get('batch_name') or '').strip() or None
+
     all_batches = []
     for server in servers:
         try:
-            batches = cc.get_batches_from_db(
-                server, data['driver'], data['database'],
-                data['uid'], data['pwd'],
-                status_filter=status_filter,
-                status_column=status_column,
-            )
-            # Tag each batch with its server credentials for later updates
+            if batch_id or batch_name:
+                batches = cc.search_batches(
+                    server, data['driver'], data['database'],
+                    data['uid'], data['pwd'],
+                    status_filter=status_filter, status_column=status_column,
+                    batch_id=batch_id, batch_name=batch_name,
+                )
+            else:
+                batches = cc.get_batches_from_db(
+                    server, data['driver'], data['database'],
+                    data['uid'], data['pwd'],
+                    status_filter=status_filter or 'Ready For Quality Control',
+                    status_column=status_column,
+                )
             for b in batches:
                 b['_server_creds'] = {
                     'server': server,
@@ -374,14 +470,14 @@ def api_db_batches():
                 }
             all_batches.extend(batches)
         except Exception as e:
-            # Log error but continue with other servers
             logger.warning(f"Failed to fetch from server {server}: {e}")
-    # Store the first server's creds as default for LAST_DB_CREDS
+
     if servers:
-        LAST_DB_CREDS.update({'server': servers[0], 'driver': data['driver'],
-                              'database': data['database'], 'uid': data['uid'], 'pwd': data['pwd']})
-        config_store.update({'db_last': {'server': server_str, 'driver': data['driver'],
-                                         'uid': data['uid'], 'database': data['database']}})
+        creds = {'server': server_str, 'driver': data['driver'],
+                'database': data['database'], 'uid': data['uid'], 'pwd': data['pwd']}
+        if stage:
+            STAGE_DB_CREDS[stage] = creds
+            config_store.set_stage_connection(stage, server_str, data['driver'], data['uid'], data['database'])
     return jsonify({'ok': True, 'batches': all_batches})
 
 
@@ -503,7 +599,7 @@ def api_run_active():
 
 
 # ---------------------------------------------------------------------------
-# CSV report download
+# CSV report download (single job -- unchanged)
 # ---------------------------------------------------------------------------
 
 @app.route('/api/run/csv/<job_id>')
@@ -519,7 +615,6 @@ def api_run_csv(job_id):
     if not results:
         return Response("No results", mimetype='text/csv')
 
-    # Determine columns based on kind
     kind = job['kind']
     if kind == 'rotation':
         headers = ['batch_name', 'total_images', 'rotated_success', 'rotated_unchanged',
@@ -547,16 +642,40 @@ def api_run_csv(job_id):
 
 
 # ---------------------------------------------------------------------------
-# Scheduler check endpoint (for manual trigger)
+# Reports tab -- persisted, cross-restart, filterable by stage (new)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/reports')
+def api_reports():
+    stage = request.args.get('stage') or None
+    if stage not in (None, 'rotation', 'crop', 'autofill'):
+        return jsonify({'ok': False, 'error': "stage must be 'rotation', 'crop', or 'autofill'"}), 400
+    limit = int(request.args.get('limit', 1000))
+    rows = reports_store.list_reports(stage=stage, limit=limit)
+    return jsonify({'ok': True, 'rows': rows})
+
+
+@app.route('/api/reports/csv')
+def api_reports_csv():
+    stage = request.args.get('stage') or None
+    rows = reports_store.list_reports(stage=stage, limit=int(request.args.get('limit', 20000)))
+    csv_data = reports_store.to_csv(rows)
+    fname = f"reports_{stage or 'all'}.csv"
+    return Response(csv_data, mimetype='text/csv',
+                    headers={'Content-Disposition': f'attachment; filename={fname}'})
+
+
+# ---------------------------------------------------------------------------
+# Scheduler check endpoint (for manual "check now" trigger)
 # ---------------------------------------------------------------------------
 
 @app.route('/api/scheduler/check/<kind>', methods=['POST'])
 def api_scheduler_check(kind):
     if kind not in ('rotation', 'crop', 'autofill'):
         return jsonify({'ok': False, 'error': "kind must be 'rotation', 'crop', or 'autofill'"}), 400
-    creds = _scheduler_get_creds()
+    creds = _scheduler_get_creds(kind)
     if not creds:
-        return jsonify({'ok': False, 'error': 'Connect to a database first.'}), 400
+        return jsonify({'ok': False, 'error': f'Connect a database for the {kind} stage first.'}), 400
     if ACTIVE_STAGE_JOB.get(kind):
         return jsonify({'ok': False, 'error': f'A {kind} job is already running.'}), 409
 
@@ -565,7 +684,6 @@ def api_scheduler_check(kind):
     in_status = pipeline['in_status']
     status_column = pipeline.get('status_column', 'StatusText')
 
-    # Parse multiple servers
     server_str = creds['server']
     servers = _parse_servers(server_str)
     all_batches = []
@@ -603,81 +721,17 @@ def api_scheduler_check(kind):
 
 @app.route('/api/scheduler/status')
 def api_scheduler_status():
-    return jsonify({'ok': True, **scheduler.status(), 'active_jobs': dict(ACTIVE_STAGE_JOB),
-                    'has_db_creds': _scheduler_get_creds() is not None})
-
-from lib.model_db import (
-    init_db, 
-    list_db_models, 
-    add_model, 
-    replace_all_models, 
-    update_model, 
-    delete_model
-)
-
-init_db()
-
-# ---------------------------------------------------------------------------
-# Filesystem Model Directory Listing
-# ---------------------------------------------------------------------------
-
-@app.route('/api/models/list', methods=['GET'])
-def api_models_dir_list():
-    models_dir = r'/home/kabwoy/Desktop/disi-projects/qc_v1/QC_Pipeline/Models'
-    try:
-        names = sorted(d for d in os.listdir(models_dir) if os.path.isdir(os.path.join(models_dir, d)))
-        return jsonify(ok=True, models=names)
-    except OSError as e:
-        return jsonify(ok=False, error=str(e))
-
-
-# ---------------------------------------------------------------------------
-# SQLite Model Profile CRUD Endpoints
-# ---------------------------------------------------------------------------
-
-@app.route('/api/models', methods=['GET'])
-def api_models_list():
-    return jsonify(ok=True, models=list_db_models())
-
-@app.route('/api/models', methods=['POST'])
-def api_models_add():
-    data = request.get_json(force=True) or {}
-    name = (data.get('name') or '').strip()
-    match = (data.get('match') or '').strip()
-    path = (data.get('model_path') or '').strip()
-    if not name or not path:
-        return jsonify(ok=False, error='name and model_path are required'), 400
-    new_id = add_model(name, match, [path])
-    return jsonify(ok=True, id=new_id, models=list_db_models())
-
-@app.route('/api/models/<int:model_id>', methods=['PUT'])
-def api_models_update(model_id):
-    data = request.get_json(force=True) or {}
-    update_model(
-        model_id,
-        data.get('name', ''),
-        data.get('match', ''),
-        data.get('model_paths', [])
-    )
-    return jsonify(ok=True, models=list_db_models())
-
-@app.route('/api/models/<int:model_id>', methods=['DELETE'])
-def api_models_delete(model_id):
-    delete_model(model_id)
-    return jsonify(ok=True, models=list_db_models())
-
-@app.route('/api/models/bulk', methods=['POST'])
-def api_models_bulk_save():
-    data = request.get_json(force=True) or {}
-    replace_all_models(data.get('models', []))
-    return jsonify(ok=True, models=list_db_models())
+    return jsonify({
+        'ok': True,
+        **scheduler.status(),
+        'active_jobs': dict(ACTIVE_STAGE_JOB),
+        # Per-stage now, instead of a single has_db_creds boolean, so the UI
+        # can show exactly which stage(s) still need a connection.
+        'has_db_creds': {k: _scheduler_get_creds(k) is not None for k in ('rotation', 'crop', 'autofill')},
+    })
 
 
 if __name__ == '__main__':
     scheduler.start()
     debug = os.environ.get('QCC_DEBUG', '0') == '1'
     app.run(host='0.0.0.0', port=8000, debug=debug, use_reloader=False)
-
-
-# sqllit
-

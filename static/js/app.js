@@ -21,10 +21,6 @@
     const res = await fetch(url);
     try { return await res.json(); } catch (e) { return { ok: false, error: 'Bad response' }; }
   }
-  async function deleteJSON(url) {
-    const res = await fetch(url, { method: 'DELETE' });
-    try { return await res.json(); } catch (e) { return { ok: false, error: `Bad response (HTTP ${res.status})` }; }
-  }
   function msg(elId, text, kind) {
     const el = $(elId);
     if (!el) return;
@@ -56,7 +52,7 @@
     crop: { title: 'Auto-Crop', subtitle: 'Batch black-border removal' },
     autofill: { title: 'Auto-Fill', subtitle: 'Fill black damage patches with white' },
     settings: { title: 'Automation & Settings', subtitle: 'Pipeline statuses, scheduler, models, Ollama fallback' },
-    addmodels: { title: 'Add Models', subtitle: 'Register orientation model checkpoints' },
+    reports: { title: 'Reports', subtitle: 'Every run, persisted to disk' },
   };
   function showView(name) {
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
@@ -65,11 +61,7 @@
     $('topbarSubtitle').textContent = VIEW_META[name].subtitle;
   }
   document.querySelectorAll('.nav-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      showView(btn.dataset.view);
-      if (btn.dataset.view === 'settings') loadOrientationModels();
-      if (btn.dataset.view === 'addmodels' && window.reloadAddModels) window.reloadAddModels();
-    });
+    btn.addEventListener('click', () => showView(btn.dataset.view));
   });
 
   const KIND_TO_PREFIX = { rotation: 'rot', crop: 'crop', autofill: 'fill' };
@@ -126,7 +118,23 @@
       const database = $(id('dbDatabase')).value;
       const status_column = $(id('dbStatusCol')).value;
       const status_filter = $(id('dbStatusFilter')).value.trim();
+      const batch_id = ($(id('dbBatchId')) && $(id('dbBatchId')).value.trim()) || '';
+      const batch_name = ($(id('dbBatchName')) && $(id('dbBatchName')).value.trim()) || '';
       state.dbDatabase = database;
+
+      // Refresh the status autocomplete -- always unfiltered by other criteria.
+      const distinct = await postJSON('/api/db/distinct', { ...state.dbCreds, database, status_column });
+      if (distinct.ok) {
+        const dl = $(id('statusList'));
+        if (dl) {
+          dl.innerHTML = '';
+          distinct.values.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v;
+            dl.appendChild(opt);
+          });
+        }
+      }
 
       msg(id('dbBatchesMsg'), 'Querying batchtable...', '');
       setStatus('busy', 'Listing batches');
@@ -134,14 +142,18 @@
         ...state.dbCreds,
         database,
         status_filter,
-        status_column
+        status_column,
+        batch_id,
+        batch_name,
+        stage: kind,   // lets the backend remember THIS stage's connection separately
       });
       if (!data.ok) { msg(id('dbBatchesMsg'), data.error || 'Query failed.', 'err'); setStatus('err', 'Query failed'); return; }
 
       loadBatches(data.batches);
-      msg(id('dbBatchesMsg'), `${data.batches.length} batch(es) with status "${status_filter}".`, 'ok');
+      msg(id('dbBatchesMsg'), `${data.batches.length} batch(es) found.`, 'ok');
       setStatus('ok', `${data.batches.length} batch(es) loaded`);
       refreshDbPill();
+      pollScheduler();
     });
 
     // ---- folder source ----
@@ -173,6 +185,9 @@
       $(id('panel-run')).classList.add('hidden');
       const badgeId = NAV_BADGE[prefix];
       if (badgeId && $(badgeId)) $(badgeId).textContent = batches.length;
+      if (kind === 'rotation' && batches.length && $('rot-selectiveBatchDir')) {
+        $('rot-selectiveBatchDir').value = batches[0].BatchDirectory || '';
+      }
     }
 
     function renderBoard() {
@@ -492,8 +507,7 @@
     $('set-fill-code').value = s.pipeline.autofill.out_code;
     $('set-fill-status-col').value = s.pipeline.autofill.status_column || 'StatusText';
 
-    $('set-chain-rot-crop').checked = !!s.scheduler.chain_rotation_to_crop;
-    $('set-chain-crop-fill').checked = !!s.scheduler.chain_crop_to_autofill;
+    $('set-rotation-next').value = s.scheduler.rotation_next || 'none';
 
     // Scheduler
     $('set-rot-sched-enabled').checked = !!s.scheduler.rotation.enabled;
@@ -516,6 +530,10 @@
     $('set-ollama-threshold').value = s.ollama.confidence_threshold;
     $('set-ollama-timeout').value = s.ollama.timeout_seconds;
 
+    // Selective/prompt-driven Ollama rotation (independent toggle)
+    $('set-ollama-selective-enabled').checked = !!s.ollama.selective_enabled;
+    $('set-ollama-selective-model').value = s.ollama.selective_model || 'qwen2.5vl';
+
     // prefill status filters
     $('rot-dbStatusFilter').value = s.pipeline.rotation.in_status;
     $('rot-dbStatusCol').value = s.pipeline.rotation.status_column || 'StatusText';
@@ -535,89 +553,8 @@
       $('themeToggle').textContent = '🌓';
     }
 
-    // Orientation model profiles are no longer part of /api/settings --
-    // they live in their own SQLite-backed table. See loadOrientationModels().
+    renderProfiles(s.orientation_models || []);
   }
-
-  // ---- orientation model profiles (SQLite-backed via /api/models) ----
-  let profileRowsData = [];
-
-  async function loadOrientationModels() {
-    const data = await getJSON('/api/models');
-    if (!data.ok) { toast('Failed to load models.', 'err'); return; }
-    renderProfiles(data.models || []);
-  }
-
-  function populateDocTypeOverride(profiles) {
-    const sel = $('rot-docTypeOverride');
-    if (!sel) return;
-    const current = sel.value;
-    sel.innerHTML = '<option value="">Use batch\'s own DocumentType / default profile</option>';
-    profiles.forEach(p => {
-      if (!p.name && !p.match) return;
-      const opt = document.createElement('option');
-      opt.value = p.match || p.name;
-      opt.textContent = p.match ? `${p.name} (${p.match})` : p.name;
-      sel.appendChild(opt);
-    });
-    if ([...sel.options].some(o => o.value === current)) sel.value = current;
-  }
-
-  function renderProfiles(profiles) {
-    profileRowsData = profiles.map(p => ({ ...p, model_paths: (p.model_paths || []) }));
-    const host = $('profileRows');
-    host.innerHTML = '';
-    profileRowsData.forEach((p, idx) => host.appendChild(profileRow(p, idx)));
-    populateDocTypeOverride(profileRowsData);
-  }
-
-  function profileRow(p, idx) {
-    const row = document.createElement('div');
-    row.className = 'profile-row';
-    row.innerHTML = `
-      <label>Profile name<input type="text" data-f="name" value="${escapeHtml(p.name || '')}"></label>
-      <label>Match (blank = default)<input type="text" data-f="match" value="${escapeHtml(p.match || '')}"></label>
-      <label>Checkpoint path(s), comma-separated<input type="text" data-f="model_paths" value="${escapeHtml((p.model_paths || []).join(', '))}"></label>
-      <button class="btn btn-danger btn-sm" type="button">Remove</button>
-    `;
-    row.querySelectorAll('input').forEach(inp => {
-      inp.addEventListener('input', () => {
-        const f = inp.dataset.f;
-        if (f === 'model_paths') profileRowsData[idx][f] = inp.value.split(',').map(s => s.trim()).filter(Boolean);
-        else profileRowsData[idx][f] = inp.value;
-      });
-    });
-    row.querySelector('button').addEventListener('click', async () => {
-      const target = profileRowsData[idx];
-      if (target.id) {
-        const data = await deleteJSON(`/api/models/${target.id}`);
-        if (!data.ok) { toast(data.error || 'Failed to delete model.', 'err'); return; }
-        toast('Model deleted.', 'ok');
-      }
-      profileRowsData.splice(idx, 1);
-      renderProfiles(profileRowsData);
-    });
-    return row;
-  }
-
-  $('btnAddProfile').addEventListener('click', () => {
-    profileRowsData.push({ id: null, name: '', match: '', model_paths: [] });
-    renderProfiles(profileRowsData);
-  });
-
-  $('btnSaveProfiles').addEventListener('click', async () => {
-    const payload = profileRowsData.map(p => ({
-      id: p.id || null,
-      name: p.name || '',
-      match: p.match || '',
-      model_paths: p.model_paths || [],
-    }));
-    const data = await postJSON('/api/models/bulk', { models: payload });
-    if (!data.ok) { msg('profilesSaveMsg', data.error || 'Failed to save.', 'err'); return; }
-    renderProfiles(data.models || []); // refresh with DB-assigned ids
-    msg('profilesSaveMsg', 'Saved.', 'ok');
-    toast('Orientation model profiles saved.', 'ok');
-  });
 
   // ---- pipeline save ----
   $('btnSavePipeline').addEventListener('click', async () => {
@@ -643,8 +580,7 @@
         }
       },
       scheduler: {
-        chain_rotation_to_crop: $('set-chain-rot-crop').checked,
-        chain_crop_to_autofill: $('set-chain-crop-fill').checked,
+        rotation_next: $('set-rotation-next').value,
       },
     };
     const data = await postJSON('/api/settings', patch);
@@ -720,6 +656,64 @@
     poll();
   }
 
+  // ---- orientation model profiles ----
+  let profileRowsData = [];
+
+  function populateDocTypeOverride(profiles) {
+  const sel = $('rot-docTypeOverride');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Use batch\'s own DocumentType / default profile</option>';
+  profiles.forEach(p => {
+    if (!p.name && !p.match) return;
+    const opt = document.createElement('option');
+    opt.value = p.match || p.name;
+    opt.textContent = p.match ? `${p.name} (${p.match})` : p.name;
+    sel.appendChild(opt);
+  });
+  if ([...sel.options].some(o => o.value === current)) sel.value = current;
+}
+
+function renderProfiles(profiles) {
+  profileRowsData = profiles.map(p => ({ ...p, model_paths: (p.model_paths || []) }));
+  const host = $('profileRows');
+  host.innerHTML = '';
+  profileRowsData.forEach((p, idx) => host.appendChild(profileRow(p, idx)));
+  populateDocTypeOverride(profileRowsData);   // <-- add this line
+}
+  function profileRow(p, idx) {
+    const row = document.createElement('div');
+    row.className = 'profile-row';
+    row.innerHTML = `
+      <label>Profile name<input type="text" data-f="name" value="${escapeHtml(p.name || '')}"></label>
+      <label>Match (blank = default)<input type="text" data-f="match" value="${escapeHtml(p.match || '')}"></label>
+      <label>Checkpoint path(s), comma-separated<input type="text" data-f="model_paths" value="${escapeHtml((p.model_paths || []).join(', '))}"></label>
+      <button class="btn btn-danger btn-sm" type="button">Remove</button>
+    `;
+    row.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const f = inp.dataset.f;
+        if (f === 'model_paths') profileRowsData[idx][f] = inp.value.split(',').map(s => s.trim()).filter(Boolean);
+        else profileRowsData[idx][f] = inp.value;
+      });
+    });
+    row.querySelector('button').addEventListener('click', () => {
+      profileRowsData.splice(idx, 1);
+      renderProfiles(profileRowsData);
+    });
+    return row;
+  }
+  $('btnAddProfile').addEventListener('click', () => {
+    profileRowsData.push({ name: '', match: '', model_paths: [] });
+    renderProfiles(profileRowsData);
+  });
+  $('btnSaveProfiles').addEventListener('click', async () => {
+    const data = await postJSON('/api/settings', { orientation_models: profileRowsData });
+    if (!data.ok) { msg('profilesSaveMsg', data.error || 'Failed to save.', 'err'); return; }
+    msg('profilesSaveMsg', 'Saved.', 'ok');
+    toast('Orientation model profiles saved.', 'ok');
+  });
+
   // ---- Ollama ----
   $('btnSaveOllama').addEventListener('click', async () => {
     const patch = {
@@ -761,13 +755,103 @@
     $('schedPill').innerHTML = anyBusy
       ? `<span class="dot dot-busy"></span>Scheduler running a job`
       : (data.running ? `<span class="dot dot-ok"></span>Scheduler watching` : `<span class="dot dot-idle"></span>Scheduler idle`);
+
+    // Per-stage DB status, now that each stage has its own connection.
+    if (data.has_db_creds) {
+      if ($('schedDbStatusRot')) $('schedDbStatusRot').textContent = data.has_db_creds.rotation ? 'connected' : 'not connected';
+      if ($('schedDbStatusCrop')) $('schedDbStatusCrop').textContent = data.has_db_creds.crop ? 'connected' : 'not connected';
+      if ($('schedDbStatusFill')) $('schedDbStatusFill').textContent = data.has_db_creds.autofill ? 'connected' : 'not connected';
+    }
   }
+
+  // ------------------------------------------------------------------
+  // Selective/prompt-driven Ollama rotation
+  // ------------------------------------------------------------------
+  $('btnSaveOllamaSelective').addEventListener('click', async () => {
+    const patch = {
+      ollama: {
+        selective_enabled: $('set-ollama-selective-enabled').checked,
+        selective_model: $('set-ollama-selective-model').value.trim() || 'qwen2.5vl',
+      },
+    };
+    const data = await postJSON('/api/settings', patch);
+    if (!data.ok) { msg('ollamaSelectiveMsg', data.error || 'Failed to save.', 'err'); return; }
+    msg('ollamaSelectiveMsg', 'Saved.', 'ok');
+    toast('Selective rotation settings saved.', 'ok');
+  });
+
+  let lastSelectiveMatches = null;
+
+  $('rot-btnSelectivePreview').addEventListener('click', async () => {
+    const batch_directory = $('rot-selectiveBatchDir').value.trim();
+    const prompt = $('rot-selectivePrompt').value.trim();
+    if (!batch_directory) { msg('rot-selectiveMsg', 'Enter or select a batch directory first.', 'err'); return; }
+    if (!prompt) { msg('rot-selectiveMsg', 'Enter a prompt, e.g. "identify all pages with a table".', 'err'); return; }
+
+    msg('rot-selectiveMsg', 'Checking pages against the prompt (this can take a while)...', '');
+    $('rot-btnSelectiveApply').disabled = true;
+    lastSelectiveMatches = null;
+    const data = await postJSON('/api/ollama/selective/preview', { batch_directory, prompt });
+    if (!data.ok) { msg('rot-selectiveMsg', data.error || 'Preview failed.', 'err'); return; }
+
+    lastSelectiveMatches = data.matched;
+    msg('rot-selectiveMsg', `${data.matched.length} of ${data.total_checked} page(s) matched.`, 'ok');
+    const grid = $('rot-selectiveResults');
+    grid.innerHTML = '';
+    data.matched.forEach(m => {
+      const card = document.createElement('div');
+      card.className = 'preview-card';
+      card.innerHTML = `
+        <div class="preview-imgs">
+          <figure>${m.thumb_b64 ? `<img src="data:image/jpeg;base64,${m.thumb_b64}">` : ''}<figcaption>${escapeHtml(m.filename)}</figcaption></figure>
+        </div>
+        <div class="preview-meta">
+          <span>rotate ${m.rotation_degrees_cw}&deg;</span>
+          <span>${escapeHtml(m.reason || '')}</span>
+        </div>`;
+      grid.appendChild(card);
+    });
+    $('rot-btnSelectiveApply').disabled = data.matched.length === 0;
+  });
+
+  $('rot-btnSelectiveApply').addEventListener('click', async () => {
+    const batch_directory = $('rot-selectiveBatchDir').value.trim();
+    if (!batch_directory || !lastSelectiveMatches || !lastSelectiveMatches.length) return;
+    msg('rot-selectiveMsg', 'Rotating matched pages...', '');
+    const data = await postJSON('/api/ollama/selective/apply', { batch_directory, matched: lastSelectiveMatches });
+    if (!data.ok) { msg('rot-selectiveMsg', data.error || 'Apply failed.', 'err'); return; }
+    msg('rot-selectiveMsg', `Rotated ${data.rotated} page(s), ${data.skipped_zero_rotation} needed no rotation, ${data.failed} failed.`, data.failed ? 'err' : 'ok');
+    toast(`Selective rotation done -- ${data.rotated} page(s) rotated.`, 'ok');
+  });
+
+  // ------------------------------------------------------------------
+  // Reports tab
+  // ------------------------------------------------------------------
+  async function loadReports() {
+    const stage = $('reportsStage').value;
+    const data = await getJSON(`/api/reports${stage ? `?stage=${stage}` : ''}`);
+    $('btnReportsCsv').href = `/api/reports/csv${stage ? `?stage=${stage}` : ''}`;
+    if (!data.ok) { toast(data.error || 'Failed to load reports.', 'err'); return; }
+    const tbody = $('reportsBody');
+    if (!data.rows.length) { tbody.innerHTML = '<tr><td colspan="5">No runs recorded yet.</td></tr>'; return; }
+    tbody.innerHTML = data.rows.map(r => `
+      <tr>
+        <td>${escapeHtml(r.kind)}</td>
+        <td>${escapeHtml(r.batch_name || '')}</td>
+        <td>${escapeHtml(r.status || '')}</td>
+        <td>${escapeHtml(r.trigger || '')}</td>
+        <td>${r.recorded_at ? new Date(r.recorded_at * 1000).toLocaleString() : '\u2014'}</td>
+      </tr>
+    `).join('');
+  }
+  $('btnReportsRefresh').addEventListener('click', loadReports);
+  $('reportsStage').addEventListener('change', loadReports);
+  document.querySelector('.nav-btn[data-view="reports"]').addEventListener('click', loadReports);
 
   // ------------------------------------------------------------------
   // Init
   // ------------------------------------------------------------------
   loadSettings();
-  loadOrientationModels();
   refreshDbPill();
   pollScheduler();
   setInterval(pollScheduler, 5000);
