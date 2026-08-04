@@ -21,10 +21,6 @@
     const res = await fetch(url);
     try { return await res.json(); } catch (e) { return { ok: false, error: 'Bad response' }; }
   }
-  async function deleteJSON(url) {
-    const res = await fetch(url, { method: 'DELETE' });
-    try { return await res.json(); } catch (e) { return { ok: false, error: `Bad response (HTTP ${res.status})` }; }
-  }
   function msg(elId, text, kind) {
     const el = $(elId);
     if (!el) return;
@@ -56,7 +52,6 @@
     crop: { title: 'Auto-Crop', subtitle: 'Batch black-border removal' },
     autofill: { title: 'Auto-Fill', subtitle: 'Fill black damage patches with white' },
     settings: { title: 'Automation & Settings', subtitle: 'Pipeline statuses, scheduler, models, Ollama fallback' },
-    addmodels: { title: 'Add Models', subtitle: 'Register orientation model checkpoints' },
   };
   function showView(name) {
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
@@ -65,11 +60,7 @@
     $('topbarSubtitle').textContent = VIEW_META[name].subtitle;
   }
   document.querySelectorAll('.nav-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      showView(btn.dataset.view);
-      if (btn.dataset.view === 'settings') loadOrientationModels();
-      if (btn.dataset.view === 'addmodels' && window.reloadAddModels) window.reloadAddModels();
-    });
+    btn.addEventListener('click', () => showView(btn.dataset.view));
   });
 
   const KIND_TO_PREFIX = { rotation: 'rot', crop: 'crop', autofill: 'fill' };
@@ -535,89 +526,8 @@
       $('themeToggle').textContent = '🌓';
     }
 
-    // Orientation model profiles are no longer part of /api/settings --
-    // they live in their own SQLite-backed table. See loadOrientationModels().
+    renderProfiles(s.orientation_models || []);
   }
-
-  // ---- orientation model profiles (SQLite-backed via /api/models) ----
-  let profileRowsData = [];
-
-  async function loadOrientationModels() {
-    const data = await getJSON('/api/models');
-    if (!data.ok) { toast('Failed to load models.', 'err'); return; }
-    renderProfiles(data.models || []);
-  }
-
-  function populateDocTypeOverride(profiles) {
-    const sel = $('rot-docTypeOverride');
-    if (!sel) return;
-    const current = sel.value;
-    sel.innerHTML = '<option value="">Use batch\'s own DocumentType / default profile</option>';
-    profiles.forEach(p => {
-      if (!p.name && !p.match) return;
-      const opt = document.createElement('option');
-      opt.value = p.match || p.name;
-      opt.textContent = p.match ? `${p.name} (${p.match})` : p.name;
-      sel.appendChild(opt);
-    });
-    if ([...sel.options].some(o => o.value === current)) sel.value = current;
-  }
-
-  function renderProfiles(profiles) {
-    profileRowsData = profiles.map(p => ({ ...p, model_paths: (p.model_paths || []) }));
-    const host = $('profileRows');
-    host.innerHTML = '';
-    profileRowsData.forEach((p, idx) => host.appendChild(profileRow(p, idx)));
-    populateDocTypeOverride(profileRowsData);
-  }
-
-  function profileRow(p, idx) {
-    const row = document.createElement('div');
-    row.className = 'profile-row';
-    row.innerHTML = `
-      <label>Profile name<input type="text" data-f="name" value="${escapeHtml(p.name || '')}"></label>
-      <label>Match (blank = default)<input type="text" data-f="match" value="${escapeHtml(p.match || '')}"></label>
-      <label>Checkpoint path(s), comma-separated<input type="text" data-f="model_paths" value="${escapeHtml((p.model_paths || []).join(', '))}"></label>
-      <button class="btn btn-danger btn-sm" type="button">Remove</button>
-    `;
-    row.querySelectorAll('input').forEach(inp => {
-      inp.addEventListener('input', () => {
-        const f = inp.dataset.f;
-        if (f === 'model_paths') profileRowsData[idx][f] = inp.value.split(',').map(s => s.trim()).filter(Boolean);
-        else profileRowsData[idx][f] = inp.value;
-      });
-    });
-    row.querySelector('button').addEventListener('click', async () => {
-      const target = profileRowsData[idx];
-      if (target.id) {
-        const data = await deleteJSON(`/api/models/${target.id}`);
-        if (!data.ok) { toast(data.error || 'Failed to delete model.', 'err'); return; }
-        toast('Model deleted.', 'ok');
-      }
-      profileRowsData.splice(idx, 1);
-      renderProfiles(profileRowsData);
-    });
-    return row;
-  }
-
-  $('btnAddProfile').addEventListener('click', () => {
-    profileRowsData.push({ id: null, name: '', match: '', model_paths: [] });
-    renderProfiles(profileRowsData);
-  });
-
-  $('btnSaveProfiles').addEventListener('click', async () => {
-    const payload = profileRowsData.map(p => ({
-      id: p.id || null,
-      name: p.name || '',
-      match: p.match || '',
-      model_paths: p.model_paths || [],
-    }));
-    const data = await postJSON('/api/models/bulk', { models: payload });
-    if (!data.ok) { msg('profilesSaveMsg', data.error || 'Failed to save.', 'err'); return; }
-    renderProfiles(data.models || []); // refresh with DB-assigned ids
-    msg('profilesSaveMsg', 'Saved.', 'ok');
-    toast('Orientation model profiles saved.', 'ok');
-  });
 
   // ---- pipeline save ----
   $('btnSavePipeline').addEventListener('click', async () => {
@@ -720,6 +630,64 @@
     poll();
   }
 
+  // ---- orientation model profiles ----
+  let profileRowsData = [];
+
+  function populateDocTypeOverride(profiles) {
+  const sel = $('rot-docTypeOverride');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Use batch\'s own DocumentType / default profile</option>';
+  profiles.forEach(p => {
+    if (!p.name && !p.match) return;
+    const opt = document.createElement('option');
+    opt.value = p.match || p.name;
+    opt.textContent = p.match ? `${p.name} (${p.match})` : p.name;
+    sel.appendChild(opt);
+  });
+  if ([...sel.options].some(o => o.value === current)) sel.value = current;
+}
+
+function renderProfiles(profiles) {
+  profileRowsData = profiles.map(p => ({ ...p, model_paths: (p.model_paths || []) }));
+  const host = $('profileRows');
+  host.innerHTML = '';
+  profileRowsData.forEach((p, idx) => host.appendChild(profileRow(p, idx)));
+  populateDocTypeOverride(profileRowsData);   // <-- add this line
+}
+  function profileRow(p, idx) {
+    const row = document.createElement('div');
+    row.className = 'profile-row';
+    row.innerHTML = `
+      <label>Profile name<input type="text" data-f="name" value="${escapeHtml(p.name || '')}"></label>
+      <label>Match (blank = default)<input type="text" data-f="match" value="${escapeHtml(p.match || '')}"></label>
+      <label>Checkpoint path(s), comma-separated<input type="text" data-f="model_paths" value="${escapeHtml((p.model_paths || []).join(', '))}"></label>
+      <button class="btn btn-danger btn-sm" type="button">Remove</button>
+    `;
+    row.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const f = inp.dataset.f;
+        if (f === 'model_paths') profileRowsData[idx][f] = inp.value.split(',').map(s => s.trim()).filter(Boolean);
+        else profileRowsData[idx][f] = inp.value;
+      });
+    });
+    row.querySelector('button').addEventListener('click', () => {
+      profileRowsData.splice(idx, 1);
+      renderProfiles(profileRowsData);
+    });
+    return row;
+  }
+  $('btnAddProfile').addEventListener('click', () => {
+    profileRowsData.push({ name: '', match: '', model_paths: [] });
+    renderProfiles(profileRowsData);
+  });
+  $('btnSaveProfiles').addEventListener('click', async () => {
+    const data = await postJSON('/api/settings', { orientation_models: profileRowsData });
+    if (!data.ok) { msg('profilesSaveMsg', data.error || 'Failed to save.', 'err'); return; }
+    msg('profilesSaveMsg', 'Saved.', 'ok');
+    toast('Orientation model profiles saved.', 'ok');
+  });
+
   // ---- Ollama ----
   $('btnSaveOllama').addEventListener('click', async () => {
     const patch = {
@@ -767,7 +735,6 @@
   // Init
   // ------------------------------------------------------------------
   loadSettings();
-  loadOrientationModels();
   refreshDbPill();
   pollScheduler();
   setInterval(pollScheduler, 5000);

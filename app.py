@@ -17,12 +17,17 @@ import config_store
 import cropping_core as cc
 import orientation_core as oc
 import autofill_core as afc
-from scheduler import Scheduler
+from db import _parse_servers,LAST_DB_CREDS
+from utils.state import ACTIVE_STAGE_JOB , JOBS , JOBS_LOCK
+from utils.helpers import _scheduler_get_creds , _start_job , scheduler
+# from utils.helpers import _start_job
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("qcc_autocrop")
 
 app = Flask(__name__)
+CORS(app) 
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
@@ -601,8 +606,78 @@ def api_scheduler_status():
     return jsonify({'ok': True, **scheduler.status(), 'active_jobs': dict(ACTIVE_STAGE_JOB),
                     'has_db_creds': _scheduler_get_creds() is not None})
 
+from lib.model_db import (
+    init_db, 
+    list_db_models, 
+    add_model, 
+    replace_all_models, 
+    update_model, 
+    delete_model
+)
+
+init_db()
+
+# ---------------------------------------------------------------------------
+# Filesystem Model Directory Listing
+# ---------------------------------------------------------------------------
+
+@app.route('/api/models/list', methods=['GET'])
+def api_models_dir_list():
+    models_dir = r'/home/kabwoy/Desktop/disi-projects/qc_v1/QC_Pipeline/Models'
+    try:
+        names = sorted(d for d in os.listdir(models_dir) if os.path.isdir(os.path.join(models_dir, d)))
+        return jsonify(ok=True, models=names)
+    except OSError as e:
+        return jsonify(ok=False, error=str(e))
+
+
+# ---------------------------------------------------------------------------
+# SQLite Model Profile CRUD Endpoints
+# ---------------------------------------------------------------------------
+
+@app.route('/api/models', methods=['GET'])
+def api_models_list():
+    return jsonify(ok=True, models=list_db_models())
+
+@app.route('/api/models', methods=['POST'])
+def api_models_add():
+    data = request.get_json(force=True) or {}
+    name = (data.get('name') or '').strip()
+    match = (data.get('match') or '').strip()
+    path = (data.get('model_path') or '').strip()
+    if not name or not path:
+        return jsonify(ok=False, error='name and model_path are required'), 400
+    new_id = add_model(name, match, [path])
+    return jsonify(ok=True, id=new_id, models=list_db_models())
+
+@app.route('/api/models/<int:model_id>', methods=['PUT'])
+def api_models_update(model_id):
+    data = request.get_json(force=True) or {}
+    update_model(
+        model_id,
+        data.get('name', ''),
+        data.get('match', ''),
+        data.get('model_paths', [])
+    )
+    return jsonify(ok=True, models=list_db_models())
+
+@app.route('/api/models/<int:model_id>', methods=['DELETE'])
+def api_models_delete(model_id):
+    delete_model(model_id)
+    return jsonify(ok=True, models=list_db_models())
+
+@app.route('/api/models/bulk', methods=['POST'])
+def api_models_bulk_save():
+    data = request.get_json(force=True) or {}
+    replace_all_models(data.get('models', []))
+    return jsonify(ok=True, models=list_db_models())
+
 
 if __name__ == '__main__':
     scheduler.start()
     debug = os.environ.get('QCC_DEBUG', '0') == '1'
     app.run(host='0.0.0.0', port=8000, debug=debug, use_reloader=False)
+
+
+# sqllit
+
