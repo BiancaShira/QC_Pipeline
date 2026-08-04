@@ -71,7 +71,7 @@
       "server": "192.168.1.2",
       "driver": "ODBC Driver 17 for SQL Server",
       "uid": "sa",
-      "database": "Nssf_PhaseVI"
+      "database": "Benefits_PhaseIV"
     },
     "crop": {
       "server": "192.168.1.12",
@@ -80,10 +80,10 @@
       "database": "SF_DOCUMENTS"
     },
     "autofill": {
-      "server": "",
+      "server": "192.168.1.12",
       "driver": "ODBC Driver 17 for SQL Server",
-      "uid": "",
-      "database": ""
+      "uid": "sa",
+      "database": "01_phase_v_bcerts_AutoImport"
     }
   },
   "ai_rotation": {
