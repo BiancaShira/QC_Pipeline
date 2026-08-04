@@ -21,32 +21,11 @@
   },
   "orientation_models": [
     {
-      "match": "SF24",
-      "model_paths": [
-        "C:\\Users\\BiancaWachira\\Desktop\\disk b\\QC_AUTOMATION-WORKSPACE\\auto_orientation_master\\Model\\best_model.pth"
-      ],
-      "name": "SF24"
-    },
-    {
-      "match": "SF24_103",
+      "match": "",
       "model_paths": [
         "C:\\Users\\BiancaWachira\\Downloads\\qcc_pipeline\\qcc_pipeline\\Model\\best_model.pth"
       ],
-      "name": "SF24_103"
-    },
-    {
-      "match": "SF50",
-      "model_paths": [
-        "/home/kabwoy/Desktop/disi-projects/batches/batch1/QCCBackups/10000266.jpg /home/kabwoy/Desktop/disi-projects/batches/batch1/QCCBackups/10000267.jpg /home/kabwoy/Desktop/disi-projects/batches/batch1/QCCBackups/10000268.jpg /home/kabwoy/Desktop/disi-projects/batches/batch1/QCCBackups/10000269.jpg /home/kabwoy/Desktop/disi-projects/batches/batch1/QCCBackups/10000270.jpg"
-      ],
-      "name": "SF50"
-    },
-    {
-      "match": "a20",
-      "model_paths": [
-        "/home/kabwoy/Desktop/disi-projects/batches/batch1"
-      ],
-      "name": "af20"
+      "name": "SF24"
     }
   ],
   "scheduler": {
@@ -67,8 +46,9 @@
       "interval_minutes": 30,
       "batch_count_trigger": 0
     },
-    "chain_rotation_to_crop": false,
-    "chain_crop_to_autofill": false
+    "chain_rotation_to_crop": true,
+    "chain_crop_to_autofill": false,
+    "after_rotation_continue": "none"
   },
   "ollama": {
     "enabled": true,
@@ -80,9 +60,13 @@
   },
   "theme": "dark",
   "db_last": {
-    "server": "127.0.0.1",
+    "server": "192.168.1.12",
     "driver": "ODBC Driver 18 for SQL Server",
     "uid": "sa",
-    "database": "KCAA_AIRTRANSPORT2"
+    "database": "Refunds"
+  },
+  "ai_rotation": {
+    "enabled": false,
+    "prompt": "Analyze the image and determine the rotation angle (0, 90, 180, 270) needed to make the text upright. If the image contains a table or other structured data, rotate it so that it is correctly oriented. Only output the number."
   }
 }
