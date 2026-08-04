@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QCC Pipeline</title>
+<title>Quality Control Pipeline</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
 
-<div class="shell">
+<div class="shell" id="appShell">
 
   <!-- ============ SIDEBAR ============ -->
   <aside class="sidebar">
@@ -19,8 +19,8 @@
         <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17" fill="none" stroke="#252d42" stroke-width="2"/><path d="M20 20 L20 6" stroke="#abf608" stroke-width="2" stroke-linecap="round"/><circle cx="20" cy="20" r="2.4" fill="#abf608"/></svg>
       </div>
       <div>
-        <h1>QCC PIPELINE</h1>
-        <p>Rotation &#8594; Crop console</p>
+        <h1>QC PIPELINE</h1>
+        <p>Rotate &#8594; Crop &#8594; Fill</p>
       </div>
     </div>
 
@@ -34,6 +34,11 @@
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
         Auto-Crop
         <span class="badge" id="navCropBadge">0</span>
+      </button>
+      <button class="nav-btn" data-view="autofill">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        Auto-Fill
+        <span class="badge" id="navFillBadge">0</span>
       </button>
       <button class="nav-btn" data-view="settings">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -54,7 +59,10 @@
         <h2 id="topbarTitle">Auto-Rotation</h2>
         <p class="subtitle" id="topbarSubtitle">Classify page orientation &amp; rotate upright</p>
       </div>
-      <div class="status-chip" id="globalStatus"><span class="dot dot-idle"></span>Idle</div>
+      <div class="topbar-actions">
+        <button class="btn btn-ghost btn-sm" id="themeToggle">🌓</button>
+        <div class="status-chip" id="globalStatus"><span class="dot dot-idle"></span>Idle</div>
+      </div>
     </header>
 
     <!-- ================================================================ -->
@@ -72,7 +80,7 @@
 
         <div class="source-body" id="rot-source-database">
           <div class="grid-form">
-            <label>Server<input type="text" id="rot-dbServer" placeholder="192.168.1.93\SQLEXPRESS"></label>
+            <label>Server (comma-separated for multiple)<input type="text" id="rot-dbServer" placeholder="192.168.1.93\SQLEXPRESS"></label>
             <label>ODBC driver<input type="text" id="rot-dbDriver" value="ODBC Driver 17 for SQL Server"></label>
             <label>Username<input type="text" id="rot-dbUser" placeholder="sa"></label>
             <label>Password<input type="password" id="rot-dbPass" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;"></label>
@@ -84,6 +92,12 @@
           <div class="hidden" id="rot-dbDatabaseRow">
             <label>Database<select id="rot-dbDatabase"></select></label>
             <div class="row-actions">
+              <label class="text-inline">Status column
+                <select id="rot-dbStatusCol">
+                  <option value="StatusText">StatusText</option>
+                  <option value="Status">Status</option>
+                </select>
+              </label>
               <label class="text-inline">Status filter (input status)
                 <input type="text" id="rot-dbStatusFilter" value="Blank Page Removal">
               </label>
@@ -120,11 +134,17 @@
       <section class="panel rot hidden" id="rot-panel-actions">
         <div class="panel-head"><span class="eyebrow">03</span><h3>Rotate &amp; run</h3></div>
         <div class="grid-form">
-          <label>Document type override <span class="hint">(optional -- matched against Settings model profiles; blank = use each batch's own DocumentType / default profile)</span>
-            <input type="text" id="rot-docTypeOverride" placeholder="e.g. Invoices">
-          </label>
+         <label>Document type override <span class="hint">(optional -- matched against Settings model profiles; blank = use each batch's own DocumentType / default profile)</span>
+  <select id="rot-docTypeOverride">
+    <option value="">Use batch's own DocumentType / default profile</option>
+  </select>
+</label>
           <label>Preview sample size<input type="number" id="rot-sampleSize" min="1" max="20" value="6"></label>
         </div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="rot-deskew">
+          Apply deskew (fine‑tune small angle skew) after rotation
+        </label>
         <label class="checkbox-row hidden" id="rot-updateStatusRow">
           <input type="checkbox" id="rot-updateStatus" checked>
           Update batch status in database after processing (per Settings &#8594; Pipeline)
@@ -144,7 +164,10 @@
       <section class="panel rot hidden" id="rot-panel-run">
         <div class="panel-head">
           <span class="eyebrow">&#9673;</span><h3>Run progress</h3>
-          <div class="head-actions"><button class="btn btn-ghost btn-sm" id="rot-btnCancelJob">Cancel</button></div>
+          <div class="head-actions">
+            <button class="btn btn-ghost btn-sm" id="rot-btnCancelJob">Cancel</button>
+            <button class="btn btn-ghost btn-sm" id="rot-btnDownloadCSV" style="display:none;">Download CSV</button>
+          </div>
         </div>
         <div class="run-layout">
           <div class="gauge-wrap">
@@ -162,7 +185,7 @@
         <div class="log-panel" id="rot-logPanel"></div>
         <div class="results-table-wrap hidden" id="rot-resultsWrap">
           <table class="results-table">
-            <thead><tr><th>Batch</th><th>Total</th><th>Rotated</th><th>Unchanged</th><th>Failed</th><th>Ollama-assisted</th><th>Backed up</th><th>Time</th></tr></thead>
+            <thead><tr><th>Batch</th><th>Total</th><th>Rotated</th><th>Unchanged</th><th>Failed</th><th>Ollama</th><th>Backed up</th><th>Time</th></tr></thead>
             <tbody id="rot-resultsBody"></tbody>
           </table>
         </div>
@@ -173,6 +196,7 @@
     <!-- CROP VIEW                                                         -->
     <!-- ================================================================ -->
     <main class="view hidden" id="view-crop">
+      {% set p='crop' %}
 
       <section class="panel" id="crop-panel-source">
         <div class="panel-head"><span class="eyebrow">01</span><h3>Select batch source</h3></div>
@@ -183,7 +207,7 @@
 
         <div class="source-body" id="crop-source-database">
           <div class="grid-form">
-            <label>Server<input type="text" id="crop-dbServer" placeholder="192.168.1.93\SQLEXPRESS"></label>
+            <label>Server (comma-separated)<input type="text" id="crop-dbServer" placeholder="192.168.1.93\SQLEXPRESS"></label>
             <label>ODBC driver<input type="text" id="crop-dbDriver" value="ODBC Driver 17 for SQL Server"></label>
             <label>Username<input type="text" id="crop-dbUser" placeholder="sa"></label>
             <label>Password<input type="password" id="crop-dbPass" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;"></label>
@@ -195,6 +219,12 @@
           <div class="hidden" id="crop-dbDatabaseRow">
             <label>Database<select id="crop-dbDatabase"></select></label>
             <div class="row-actions">
+              <label class="text-inline">Status column
+                <select id="crop-dbStatusCol">
+                  <option value="StatusText">StatusText</option>
+                  <option value="Status">Status</option>
+                </select>
+              </label>
               <label class="text-inline">Status filter (input status)
                 <input type="text" id="crop-dbStatusFilter" value="Ready For Auto Crop">
               </label>
@@ -253,7 +283,10 @@
       <section class="panel hidden" id="crop-panel-run">
         <div class="panel-head">
           <span class="eyebrow">&#9673;</span><h3>Run progress</h3>
-          <div class="head-actions"><button class="btn btn-ghost btn-sm" id="crop-btnCancelJob">Cancel</button></div>
+          <div class="head-actions">
+            <button class="btn btn-ghost btn-sm" id="crop-btnCancelJob">Cancel</button>
+            <button class="btn btn-ghost btn-sm" id="crop-btnDownloadCSV" style="display:none;">Download CSV</button>
+          </div>
         </div>
         <div class="run-layout">
           <div class="gauge-wrap">
@@ -279,17 +312,142 @@
     </main>
 
     <!-- ================================================================ -->
+    <!-- AUTOFILL VIEW                                                     -->
+    <!-- ================================================================ -->
+    <main class="view hidden" id="view-autofill">
+      {% set p='fill' %}
+
+      <section class="panel" id="fill-panel-source">
+        <div class="panel-head"><span class="eyebrow">01</span><h3>Select batch source</h3></div>
+        <div class="source-toggle" role="tablist" data-scope="fill">
+          <button class="toggle-btn active" data-source="database">Database</button>
+          <button class="toggle-btn" data-source="folder">Folder structure</button>
+        </div>
+
+        <div class="source-body" id="fill-source-database">
+          <div class="grid-form">
+            <label>Server (comma-separated)<input type="text" id="fill-dbServer" placeholder="192.168.1.93\SQLEXPRESS"></label>
+            <label>ODBC driver<input type="text" id="fill-dbDriver" value="ODBC Driver 17 for SQL Server"></label>
+            <label>Username<input type="text" id="fill-dbUser" placeholder="sa"></label>
+            <label>Password<input type="password" id="fill-dbPass" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;"></label>
+          </div>
+          <div class="row-actions">
+            <button class="btn btn-acc2" id="fill-btnDbConnect">Connect &amp; list databases</button>
+            <span class="inline-msg" id="fill-dbConnectMsg"></span>
+          </div>
+          <div class="hidden" id="fill-dbDatabaseRow">
+            <label>Database<select id="fill-dbDatabase"></select></label>
+            <div class="row-actions">
+              <label class="text-inline">Status column
+                <select id="fill-dbStatusCol">
+                  <option value="StatusText">StatusText</option>
+                  <option value="Status">Status</option>
+                </select>
+              </label>
+              <label class="text-inline">Status filter (input status)
+                <input type="text" id="fill-dbStatusFilter" value="Auto Rotate-complete">
+              </label>
+              <button class="btn btn-acc2" id="fill-btnDbListBatches">List batches</button>
+              <span class="inline-msg" id="fill-dbBatchesMsg"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="source-body hidden" id="fill-source-folder">
+          <label>Parent folder path<input type="text" id="fill-folderPath" placeholder="F:\SAMPLES  (Box folders, each with Batch subfolders)"></label>
+          <div class="row-actions">
+            <button class="btn btn-acc2" id="fill-btnFolderDiscover">Discover batches</button>
+            <span class="inline-msg" id="fill-folderDiscoverMsg"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="fill-panel-batches">
+        <div class="panel-head">
+          <span class="eyebrow">02</span><h3>Batches</h3>
+          <div class="head-actions">
+            <button class="btn btn-ghost btn-sm" id="fill-btnSelectAll">Select all</button>
+            <button class="btn btn-ghost btn-sm" id="fill-btnSelectNone">Select none</button>
+          </div>
+        </div>
+        <div class="board" id="fill-batchBoard"></div>
+        <div class="row-actions" id="fill-prepareRow">
+          <button class="btn btn-ghost" id="fill-btnPrepareBackups">Create QCCBackups folders for selected</button>
+          <span class="inline-msg" id="fill-prepareMsg"></span>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="fill-panel-actions">
+        <div class="panel-head"><span class="eyebrow">03</span><h3>Auto-Fill &amp; run</h3></div>
+        <div class="grid-form">
+          <label>Dark threshold <span class="hint">(0&ndash;255, lower = more sensitive to damage)</span><input type="number" id="fill-threshold" min="0" max="255" value="60"></label>
+          <label>Preview sample size<input type="number" id="fill-sampleSize" min="1" max="20" value="6"></label>
+        </div>
+        <label class="checkbox-row hidden" id="fill-updateStatusRow">
+          <input type="checkbox" id="fill-updateStatus" checked>
+          Update batch status in database after processing (per Settings &#8594; Pipeline)
+        </label>
+        <div class="row-actions">
+          <button class="btn btn-acc2" id="fill-btnPreview">Preview selected (no changes made)</button>
+          <button class="btn btn-acc2-solid" id="fill-btnRun">Run auto-fill &amp; write to disk</button>
+        </div>
+        <p class="warn-note">Run mode moves every original image into <code>QCCBackups</code> inside its batch folder first, then fills damage from that backup copy back into the image's original location. Nothing is deleted.</p>
+      </section>
+
+      <section class="panel hidden" id="fill-panel-preview">
+        <div class="panel-head"><span class="eyebrow">&#9673;</span><h3>Preview</h3><div class="head-actions"><span class="inline-msg" id="fill-previewMeta"></span></div></div>
+        <div class="preview-grid" id="fill-previewGrid"></div>
+      </section>
+
+      <section class="panel hidden" id="fill-panel-run">
+        <div class="panel-head">
+          <span class="eyebrow">&#9673;</span><h3>Run progress</h3>
+          <div class="head-actions">
+            <button class="btn btn-ghost btn-sm" id="fill-btnCancelJob">Cancel</button>
+            <button class="btn btn-ghost btn-sm" id="fill-btnDownloadCSV" style="display:none;">Download CSV</button>
+          </div>
+        </div>
+        <div class="run-layout">
+          <div class="gauge-wrap">
+            <svg viewBox="0 0 128 128" class="gauge"><circle cx="64" cy="64" r="53" class="gauge-track"/><circle cx="64" cy="64" r="53" class="gauge-fill" id="fill-gaugeFill"/></svg>
+            <div class="gauge-label"><span id="fill-gaugePct">0%</span><small id="fill-gaugeSub">batch 0 / 0</small></div>
+          </div>
+          <div class="run-info">
+            <div class="run-info-row"><span>Current batch</span><strong id="fill-runCurrentBatch">&mdash;</strong></div>
+            <div class="run-info-row"><span>Current file</span><strong id="fill-runCurrentFile">&mdash;</strong></div>
+            <div class="run-info-row"><span>Files in batch</span><strong id="fill-runFilesProgress">&mdash;</strong></div>
+            <div class="run-info-row"><span>Trigger</span><strong id="fill-runTrigger">&mdash;</strong></div>
+            <div class="run-info-row"><span>Status</span><strong id="fill-runStatus">&mdash;</strong></div>
+          </div>
+        </div>
+        <div class="log-panel" id="fill-logPanel"></div>
+        <div class="results-table-wrap hidden" id="fill-resultsWrap">
+          <table class="results-table">
+            <thead><tr><th>Batch</th><th>Total</th><th>Filled</th><th>Unchanged</th><th>Failed</th><th>Backed up</th><th>Time</th></tr></thead>
+            <tbody id="fill-resultsBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- ================================================================ -->
     <!-- SETTINGS / AUTOMATION VIEW                                        -->
     <!-- ================================================================ -->
     <main class="view hidden" id="view-settings">
 
       <section class="panel">
         <div class="panel-head"><span class="eyebrow">PIPE</span><h3>Status pipeline</h3></div>
-        <p class="inline-msg">Each stage watches for batches whose <code>StatusText</code> matches its input status, and writes the output status/code back once a batch finishes. Crop's input defaults to matching Rotation's output so batches flow through automatically -- edit them independently if your workflow differs.</p>
+        <p class="inline-msg">Each stage watches batches with the selected status column and value, and writes output status/code on success.</p>
         <div class="settings-grid">
           <div>
             <h4 style="font-family:var(--mono);color:var(--acc2);font-size:12.5px;margin:14px 0 8px;">Auto-Rotation</h4>
             <div class="grid-form">
+              <label>Status column
+                <select id="set-rot-status-col">
+                  <option value="StatusText">StatusText</option>
+                  <option value="Status">Status</option>
+                </select>
+              </label>
               <label>Input status (picks up)<input type="text" id="set-rot-in"></label>
               <label>Output status (writes on success)<input type="text" id="set-rot-out"></label>
               <label>Output status code<input type="number" id="set-rot-code"></label>
@@ -298,15 +456,40 @@
           <div>
             <h4 style="font-family:var(--mono);color:var(--acc);font-size:12.5px;margin:14px 0 8px;">Auto-Crop</h4>
             <div class="grid-form">
+              <label>Status column
+                <select id="set-crop-status-col">
+                  <option value="StatusText">StatusText</option>
+                  <option value="Status">Status</option>
+                </select>
+              </label>
               <label>Input status (picks up)<input type="text" id="set-crop-in"></label>
               <label>Output status (writes on success)<input type="text" id="set-crop-out"></label>
               <label>Output status code<input type="number" id="set-crop-code"></label>
             </div>
           </div>
+          <div>
+            <h4 style="font-family:var(--mono);color:var(--acc2);font-size:12.5px;margin:14px 0 8px;">Auto-Fill</h4>
+            <div class="grid-form">
+              <label>Status column
+                <select id="set-fill-status-col">
+                  <option value="StatusText">StatusText</option>
+                  <option value="Status">Status</option>
+                </select>
+              </label>
+              <label>Input status (picks up)<input type="text" id="set-fill-in"></label>
+              <label>Output status (writes on success)<input type="text" id="set-fill-out"></label>
+              <label>Output status code<input type="number" id="set-fill-code"></label>
+            </div>
+          </div>
         </div>
+        <!-- MODIFIED LABEL HERE -->
         <label class="checkbox-row" style="margin-top:6px;">
-          <input type="checkbox" id="set-chain">
-          Chain: as soon as a rotation run finishes, immediately hand its batches to Auto-Crop (instead of waiting for Crop's own schedule)
+          <input type="checkbox" id="set-chain-rot-crop">
+          Chain Rotation → Auto-Fill (Skips Crop)
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="set-chain-crop-fill">
+          Chain Crop → Auto-Fill
         </label>
         <div class="row-actions"><button class="btn btn-acc-solid" id="btnSavePipeline">Save pipeline settings</button><span class="inline-msg" id="pipelineSaveMsg"></span></div>
       </section>
@@ -331,13 +514,23 @@
             <label>&nbsp;<button class="btn btn-acc btn-sm" id="btnCheckCropNow" style="margin-top:2px;">Check batches now</button></label>
           </div>
         </div>
-        <p class="warn-note">Automation only works while a database connection has been made this session (Database source, either tab) -- folder mode has no status column to poll, so it stays manual. The scheduler checks every 20s in the background; a stage already mid-run is skipped until it finishes.</p>
+
+        <div class="stage-sched autofill">
+          <h4><span class="switch"><input type="checkbox" id="set-fill-sched-enabled"><span class="slider"></span></span> Auto-Fill automation</h4>
+          <div class="grid-form cols-3">
+            <label>Run every (minutes, 0 = off)<input type="number" id="set-fill-interval" min="0" value="30"></label>
+            <label>...or once this many batches queue up (0 = off)<input type="number" id="set-fill-count" min="0" value="0"></label>
+            <label>&nbsp;<button class="btn btn-acc2 btn-sm" id="btnCheckFillNow" style="margin-top:2px;">Check batches now</button></label>
+          </div>
+        </div>
+
+        <p class="warn-note">Automation only works while a database connection has been made this session -- folder mode has no status column to poll, so it stays manual. The scheduler checks every 20s in the background; a stage already mid-run is skipped until it finishes.</p>
         <div class="row-actions"><button class="btn btn-acc-solid" id="btnSaveScheduler">Save scheduler settings</button><span class="inline-msg" id="schedSaveMsg"></span></div>
       </section>
 
       <section class="panel">
         <div class="panel-head"><span class="eyebrow">MODEL</span><h3>Orientation models</h3></div>
-        <p class="inline-msg">One or more trained checkpoints. A batch's <code>DocumentType</code> (read from <code>batchtable</code> when that column exists) is matched against each profile's match text (case-insensitive, substring). Leave match blank for the catch-all default profile. Multiple checkpoints for one profile (comma-separated paths) are ensembled together, same as the original script.</p>
+        <p class="inline-msg">One or more trained checkpoints. A batch's <code>DocumentType</code> is matched against each profile's match text (case‑insensitive substring). Leave match blank for the default profile. Multiple checkpoints (comma‑separated) are ensembled.</p>
         <div id="profileRows"></div>
         <div class="row-actions">
           <button class="btn btn-ghost btn-sm" id="btnAddProfile">+ Add model profile</button>
@@ -348,7 +541,7 @@
 
       <section class="panel">
         <div class="panel-head"><span class="eyebrow">OLLAMA</span><h3>Ollama fallback for uncertain pages</h3></div>
-        <p class="inline-msg">When enabled, pages the classifier isn't confident about (or every page, depending on trigger) are also shown to a local Ollama vision model, and its answer is used for the rotation instead.</p>
+        <p class="inline-msg">When enabled, pages the classifier isn't confident about (or every page, depending on trigger) are also shown to a local Ollama vision model.</p>
         <label class="checkbox-row"><input type="checkbox" id="set-ollama-enabled">Enable Ollama fallback</label>
         <div class="grid-form cols-3">
           <label>Ollama base URL<input type="text" id="set-ollama-url" placeholder="http://localhost:11434"></label>
@@ -361,7 +554,7 @@
           </label>
         </div>
         <div class="grid-form">
-          <label>Confidence threshold <span class="hint">(0&ndash;1, used with "low confidence" trigger)</span><input type="number" id="set-ollama-threshold" min="0" max="1" step="0.05" value="0.55"></label>
+          <label>Confidence threshold <span class="hint">(0&ndash;1)</span><input type="number" id="set-ollama-threshold" min="0" max="1" step="0.05" value="0.55"></label>
           <label>Request timeout (seconds)<input type="number" id="set-ollama-timeout" min="5" value="45"></label>
         </div>
         <div class="row-actions">
