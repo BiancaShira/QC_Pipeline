@@ -1,21 +1,21 @@
 {
   "pipeline": {
     "rotation": {
-      "in_status": "Scan Complete",
-      "out_status": "Auto Rotate-complete",
-      "out_code": 15,
+      "in_status": "Ready For Auto Rotation",
+      "out_status": "Ready For Auto Cropping",
+      "out_code": 18,
       "status_column": "StatusText"
     },
     "crop": {
-      "in_status": "Auto Rotate-complete",
-      "out_status": "Auto Crop-Complete",
-      "out_code": 20,
+      "in_status": "Ready For Auto Cropping",
+      "out_status": "Ready For AutoFill",
+      "out_code": 21,
       "status_column": "StatusText"
     },
     "autofill": {
-      "in_status": "Auto Crop-complete",
+      "in_status": "Ready For AutoFill",
       "out_status": "Ready For Quality Control",
-      "out_code": 22,
+      "out_code": 1000,
       "status_column": "StatusText"
     }
   },
@@ -68,10 +68,10 @@
   },
   "db_connections": {
     "rotation": {
-      "server": "192.168.1.2",
+      "server": "192.168.1.12",
       "driver": "ODBC Driver 17 for SQL Server",
       "uid": "sa",
-      "database": "Benefits_PhaseIV"
+      "database": "SF_DOCUMENTS"
     },
     "crop": {
       "server": "192.168.1.12",
