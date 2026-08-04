@@ -10,8 +10,8 @@ import cropping_core as cc
 import autofill_core as afc
 import orientation_core as oc
 import uuid
-from utils.state import JOBS_LOCK,JOBS
-ACTIVE_STAGE_JOB = {'rotation': None, 'crop': None, 'autofill': None}
+from utils.state import JOBS_LOCK,JOBS,ACTIVE_STAGE_JOB
+
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +41,8 @@ def _scheduler_stage_busy(kind):
     return ACTIVE_STAGE_JOB.get(kind) is not None
 
 def _scheduler_start_run(kind, batches, reason):
+    if ACTIVE_STAGE_JOB.get(kind):
+        return
     settings = config_store.load()
     threshold = settings.get('_chain_crop_threshold', 100) if kind == 'crop' else \
                 settings.get('_chain_fill_threshold', 60) if kind == 'autofill' else 100

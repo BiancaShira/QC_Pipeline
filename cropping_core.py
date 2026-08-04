@@ -264,11 +264,13 @@ def process_batch_with_backup(batch_dir, threshold=100, progress_cb=None, cancel
         try:
             if backup_path.exists():
                 stats['already_backed_up'] += 1
+                source_path = img_path      # <-- read the current (already-processed) file, not the stale backup
             else:
                 shutil.move(str(img_path), str(backup_path))
                 stats['moved_to_backup'] += 1
+                source_path = backup_path   # <-- first stage: original just moved here, read from here
 
-            success, msg = remove_black_borders(str(backup_path), str(img_path), threshold=threshold)
+            success, msg = remove_black_borders(str(source_path), str(img_path), threshold=threshold)
             if not success:
                 stats['cropped_failed'] += 1
                 stats['errors'].append(f"{rel}: {msg}")
@@ -284,7 +286,6 @@ def process_batch_with_backup(batch_dir, threshold=100, progress_cb=None, cancel
             progress_cb(idx, total, str(rel))
 
     return stats
-
 
 # ---------------------------------------------------------------------------
 # SQL Server helpers with status column support
