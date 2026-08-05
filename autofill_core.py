@@ -170,78 +170,245 @@ def generate_preview(batch_dir, threshold=DARK_THRESHOLD, sample_size=6):
     }
 
 
+# def _canonical_and_output_paths(batch_dir, img_path):
+#     rel = img_path.relative_to(batch_dir)
+#     canonical_stem = _SUFFIX_RE.sub('', img_path.stem)
+    
+#     canonical_rel = rel.with_name(canonical_stem + rel.suffix)
+#     output_path = batch_dir / canonical_rel
+    
+#     backup_rel = rel.with_name(canonical_stem + '_1' + rel.suffix)
+#     backup_path = batch_dir / BACKUP_DIR_NAME / backup_rel
+    
+#     return rel, output_path, backup_path
+
+
+# def process_batch_with_backup(batch_dir, threshold=DARK_THRESHOLD,
+#                               progress_cb=None, cancel_check=None):
+#     """Backup original with '_1' suffix into QCCBackups, then process into batch_dir."""
+#     batch_dir = Path(batch_dir)
+#     backup_dir = batch_dir / BACKUP_DIR_NAME
+#     backup_dir.mkdir(parents=True, exist_ok=True)
+
+#     image_files = list_images(batch_dir)
+
+#     by_canonical = {}
+#     for p in image_files:
+#         canonical_stem = _SUFFIX_RE.sub('', p.stem)
+#         key = str(p.relative_to(batch_dir).with_name(canonical_stem + p.suffix))
+#         if key not in by_canonical or not p.stem.endswith('_1'):
+#             by_canonical[key] = p
+#     image_files = list(by_canonical.values())
+#     total = len(image_files)
+
+#     stats = {
+#         'total_images': total,
+#         'moved_to_backup': 0,
+#         'already_backed_up': 0,
+#         'filled_success': 0,
+#         'filled_unchanged': 0,
+#         'filled_failed': 0,
+#         'backup_dir': str(backup_dir),
+#         'errors': [],
+#     }
+
+#     for idx, img_path in enumerate(image_files, start=1):
+#         if cancel_check and cancel_check():
+#             stats['cancelled_at'] = idx
+#             break
+
+#         rel, output_path, backup_path = _canonical_and_output_paths(batch_dir, img_path)
+#         backup_path.parent.mkdir(parents=True, exist_ok=True)
+#         output_path.parent.mkdir(parents=True, exist_ok=True)
+
+#         try:
+#             if backup_path.exists():
+#                 stats['already_backed_up'] += 1
+#                 source_path = backup_path
+#             else:
+#                 shutil.move(str(img_path), str(backup_path))
+#                 stats['moved_to_backup'] += 1
+#                 source_path = backup_path
+
+#             success, status, detail = fill_damage(str(source_path), str(output_path), threshold)
+            
+#             if not success:
+#                 stats['filled_failed'] += 1
+#                 stats['errors'].append(f"{rel}: {detail}")
+#             elif status == 'unchanged':
+#                 stats['filled_unchanged'] += 1
+#             else:
+#                 stats['filled_success'] += 1
+#         except Exception as e:
+#             stats['filled_failed'] += 1
+#             stats['errors'].append(f"{rel}: {str(e)}")
+
+#         if progress_cb:
+#             progress_cb(idx, total, str(rel))
+
+#     return stats
+
+
+import shutil
+from pathlib import Path
+import re
+
+_SUFFIX_RE = re.compile(r"_1$")
+BACKUP_DIR_NAME = "QCCBackups"
+
+
 def _canonical_and_output_paths(batch_dir, img_path):
+    """
+    Common naming convention used by all pipeline stages.
+
+    Original:
+        page001.jpg
+
+    Backup:
+        QCCBackups/page001_1.jpg
+
+    Working image:
+        page001.jpg
+
+    If page001.jpg is processed again, the existing backup is reused and
+    the working image is overwritten.
+    """
     rel = img_path.relative_to(batch_dir)
-    canonical_stem = _SUFFIX_RE.sub('', img_path.stem)
-    
+
+    canonical_stem = _SUFFIX_RE.sub("", img_path.stem)
     canonical_rel = rel.with_name(canonical_stem + rel.suffix)
+
+    # Working image (always original filename)
     output_path = batch_dir / canonical_rel
-    
-    backup_rel = rel.with_name(canonical_stem + '_1' + rel.suffix)
-    backup_path = batch_dir / BACKUP_DIR_NAME / backup_rel
-    
+
+    # Backup (always _1)
+    backup_path = (
+        batch_dir
+        / BACKUP_DIR_NAME
+        / rel.with_name(canonical_stem + "_1" + rel.suffix)
+    )
+
     return rel, output_path, backup_path
 
 
-def process_batch_with_backup(batch_dir, threshold=DARK_THRESHOLD,
-                              progress_cb=None, cancel_check=None):
-    """Backup original with '_1' suffix into QCCBackups, then process into batch_dir."""
+def process_batch_with_backup(
+    batch_dir,
+    threshold=DARK_THRESHOLD,
+    progress_cb=None,
+    cancel_check=None,
+):
+    """
+    Backup original into QCCBackups/page001_1.jpg
+
+    Working folder always contains:
+
+        page001.jpg
+    """
+
     batch_dir = Path(batch_dir)
+
     backup_dir = batch_dir / BACKUP_DIR_NAME
     backup_dir.mkdir(parents=True, exist_ok=True)
 
     image_files = list_images(batch_dir)
 
+    #
+    # De-dupe.
+    # If both page001.jpg and page001_1.jpg somehow exist,
+    # prefer page001.jpg because that's the working image.
+    #
     by_canonical = {}
+
     for p in image_files:
-        canonical_stem = _SUFFIX_RE.sub('', p.stem)
-        key = str(p.relative_to(batch_dir).with_name(canonical_stem + p.suffix))
-        if key not in by_canonical or not p.stem.endswith('_1'):
+        canonical_stem = _SUFFIX_RE.sub("", p.stem)
+        key = str(
+            p.relative_to(batch_dir).with_name(
+                canonical_stem + p.suffix
+            )
+        )
+
+        if key not in by_canonical or not p.stem.endswith("_1"):
             by_canonical[key] = p
+
     image_files = list(by_canonical.values())
+
     total = len(image_files)
 
     stats = {
-        'total_images': total,
-        'moved_to_backup': 0,
-        'already_backed_up': 0,
-        'filled_success': 0,
-        'filled_unchanged': 0,
-        'filled_failed': 0,
-        'backup_dir': str(backup_dir),
-        'errors': [],
+        "total_images": total,
+        "moved_to_backup": 0,
+        "already_backed_up": 0,
+        "filled_success": 0,
+        "filled_unchanged": 0,
+        "filled_failed": 0,
+        "backup_dir": str(backup_dir),
+        "errors": [],
     }
 
     for idx, img_path in enumerate(image_files, start=1):
+
         if cancel_check and cancel_check():
-            stats['cancelled_at'] = idx
+            stats["cancelled_at"] = idx
             break
 
-        rel, output_path, backup_path = _canonical_and_output_paths(batch_dir, img_path)
+        rel, output_path, backup_path = _canonical_and_output_paths(
+            batch_dir,
+            img_path,
+        )
+
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
+
+            #
+            # First run
+            #
             if backup_path.exists():
-                stats['already_backed_up'] += 1
-                source_path = backup_path
+
+                stats["already_backed_up"] += 1
+
+                #
+                # Re-run or later pipeline stage.
+                # Process the latest working image if present.
+                #
+                if output_path.exists():
+                    source_path = output_path
+                else:
+                    source_path = backup_path
+
             else:
+
+                #
+                # Preserve the original once.
+                #
                 shutil.move(str(img_path), str(backup_path))
-                stats['moved_to_backup'] += 1
+                stats["moved_to_backup"] += 1
+
+                #
+                # First processing starts from the original.
+                #
                 source_path = backup_path
 
-            success, status, detail = fill_damage(str(source_path), str(output_path), threshold)
-            
+            success, status, detail = fill_damage(
+                str(source_path),
+                str(output_path),
+                threshold,
+            )
+
             if not success:
-                stats['filled_failed'] += 1
-                stats['errors'].append(f"{rel}: {detail}")
-            elif status == 'unchanged':
-                stats['filled_unchanged'] += 1
+                stats["filled_failed"] += 1
+                stats["errors"].append(f"{rel}: {detail}")
+
+            elif status == "unchanged":
+                stats["filled_unchanged"] += 1
+
             else:
-                stats['filled_success'] += 1
+                stats["filled_success"] += 1
+
         except Exception as e:
-            stats['filled_failed'] += 1
-            stats['errors'].append(f"{rel}: {str(e)}")
+            stats["filled_failed"] += 1
+            stats["errors"].append(f"{rel}: {e}")
 
         if progress_cb:
             progress_cb(idx, total, str(rel))
