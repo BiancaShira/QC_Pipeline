@@ -14,8 +14,8 @@
     },
     "autofill": {
       "in_status": "Ready For AutoFill",
-      "out_status": "Ready For Quality Control",
-      "out_code": 1000,
+      "out_status": "Ready For Review",
+      "out_code": 24,
       "status_column": "StatusText"
     }
   },
