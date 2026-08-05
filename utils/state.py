@@ -15,4 +15,7 @@ LAST_DB_CREDS = {
     "database": None,
     "uid": None,
     "pwd": None,
+    
 }
+
+STAGE_DB_CREDS = {'rotation': None, 'crop': None, 'autofill': None}

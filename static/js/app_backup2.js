@@ -68,13 +68,6 @@
   const PREFIX_TO_VIEW = { rot: 'rotation', crop: 'crop', fill: 'autofill' };
   const NAV_BADGE = { rot: 'navRotBadge', crop: 'navCropBadge', fill: 'navFillBadge' };
 
-  // Human-readable labels for pipeline stages, used in the confirm modal
-  // and toasts so people can see the full chain before committing.
-  const STAGE_LABEL = { rotation: 'Rotate', crop: 'Crop', autofill: 'Auto-Fill' };
-  function describePipeline(pipeline) {
-    return pipeline.map(k => STAGE_LABEL[k] || k).join(' \u2192 ');
-  }
-
   // ------------------------------------------------------------------
   // Per-stage controller factory
   // ------------------------------------------------------------------
@@ -242,38 +235,16 @@
 
     function getSelectedBatches() { return state.batches.filter(b => b._selected); }
 
-    // ---- pipeline mode ----
-    // Reads the per-panel "Pipeline" <select> (e.g. "rotation,crop,autofill")
-    // and returns it as an ordered array of stage names. Falls back to a
-    // single-stage pipeline if the control isn't present for some reason.
-    function getPipeline() {
-      const sel = $(id('pipelineMode'));
-      if (!sel || !sel.value) return [kind];
-      return sel.value.split(',').map(s => s.trim()).filter(Boolean);
-    }
-
-    // ---- extra params for a given stage (used both for this panel's own
-    // kind, and for whichever stage the pipeline dropdown says to start
-    // with -- which may be a different stage than this panel's default). If
-    // the relevant field doesn't exist on this panel (e.g. no threshold
-    // input on the Rotation panel), fall back to the same defaults used for
-    // auto-chained, non-initiating pipeline steps.
-    function extraParamsForStage(stageKind) {
-      if (stageKind === 'crop') {
-        const el = $(id('threshold'));
-        return { threshold: el ? (parseInt(el.value, 10) || 100) : 100 };
-      }
-      if (stageKind === 'autofill') {
-        const el = $(id('threshold'));
-        return { threshold: el ? (parseInt(el.value, 10) || 60) : 60 };
-      }
-      if (stageKind === 'rotation') {
-        const el = $(id('deskew'));
-        return { deskew: el ? el.checked : false };
+    // ---- extra params for each kind ----
+    function extraParams() {
+      if (kind === 'crop') return { threshold: parseInt($(id('threshold')).value, 10) || 100 };
+      if (kind === 'autofill') return { threshold: parseInt($(id('threshold')).value, 10) || 60 };
+      if (kind === 'rotation') {
+        const deskew = $(id('deskew')).checked;
+        return { deskew };
       }
       return {};
     }
-    function extraParams() { return extraParamsForStage(kind); }
 
     // ---- preview ----
     $(id('btnPreview')).addEventListener('click', async () => {
@@ -354,18 +325,13 @@
     $(id('btnRun')).addEventListener('click', () => {
       const selected = getSelectedBatches();
       if (!selected.length) { toast('Select at least one batch first.', 'err'); return; }
-      const pipeline = getPipeline();
-      const actualKind = pipeline[0];
       $('confirmCount').textContent = selected.length;
       const titleMap = {
         rotation: 'Confirm rotation run',
         crop: 'Confirm crop run',
         autofill: 'Confirm auto-fill run'
       };
-      const baseTitle = titleMap[actualKind] || 'Confirm run';
-      $('confirmTitle').textContent = pipeline.length > 1
-        ? `${baseTitle} (pipeline: ${describePipeline(pipeline)})`
-        : baseTitle;
+      $('confirmTitle').textContent = titleMap[kind] || 'Confirm run';
       $('confirmModal').classList.remove('hidden');
       $('confirmModal').dataset.forStage = prefix;
     });
@@ -373,14 +339,11 @@
     async function startRun(trigger) {
       const selected = getSelectedBatches();
       const update_status = $(id('updateStatus')).checked && state.source === 'database';
-      const pipeline = getPipeline();
-      const actualKind = pipeline[0]; // the stage that actually starts -- may differ from this panel's own `kind`
       const payload = {
-        kind: actualKind,
+        kind,
         batches: selected.map(b => ({ BatchID: b.BatchID, BatchName: b.BatchName, BatchDirectory: b.BatchDirectory, DocumentType: b.DocumentType, _server_creds: b._server_creds })),
         update_status,
-        pipeline,
-        ...extraParamsForStage(actualKind),
+        ...extraParams(),
       };
       if (update_status && state.dbCreds && state.dbDatabase) payload.db_creds = { ...state.dbCreds, database: state.dbDatabase };
 
@@ -397,9 +360,6 @@
         $(id('btnRun')).disabled = false;
         setStatus('err', 'Failed to start');
         return;
-      }
-      if (pipeline.length > 1) {
-        toast(`Pipeline started: ${describePipeline(pipeline)}. Later stages run automatically.`, 'ok');
       }
       state.jobId = data.job_id;
       if (state.pollTimer) clearInterval(state.pollTimer);
@@ -443,7 +403,7 @@
       logPanel.innerHTML = data.log.map(l => `<div class="${l.includes('ERROR') || l.includes('FAILED') ? 'err' : ''}">${escapeHtml(l)}</div>`).join('');
       logPanel.scrollTop = logPanel.scrollHeight;
 
-      renderResultsTable(data.results, data.kind);
+      renderResultsTable(data.results);
 
       if (data.status !== 'running') {
         clearInterval(state.pollTimer);
@@ -453,19 +413,10 @@
         if (data.status === 'done') {
           $(id('btnDownloadCSV')).style.display = 'inline-block';
         }
-        // If this stage's job chained into the next pipeline step, that runs
-        // as a brand-new job under the next stage's own tab -- surface it so
-        // it isn't silently missed.
-        const pipeline = data.pipeline || [];
-        const myIdx = pipeline.indexOf(data.kind);
-        if (data.status === 'done' && myIdx !== -1 && myIdx + 1 < pipeline.length) {
-          const nextKind = pipeline[myIdx + 1];
-          toast(`${STAGE_LABEL[data.kind]} finished -- continuing to ${STAGE_LABEL[nextKind]} automatically.`, 'ok');
-        }
       }
     }
 
-    function renderResultsTable(results, jobKind) {
+    function renderResultsTable(results) {
       if (!results || !results.length) return;
       $(id('resultsWrap')).classList.remove('hidden');
       const body = $(id('resultsBody'));
@@ -474,14 +425,14 @@
         const tr = document.createElement('tr');
         if (r.status === 'error') {
           tr.innerHTML = `<td>${escapeHtml(r.batch_name)}</td><td colspan="6" style="color:var(--err)">${escapeHtml(r.error)}</td>`;
-        } else if (jobKind === 'crop') {
+        } else if (kind === 'crop') {
           tr.innerHTML = `
             <td>${escapeHtml(r.batch_name)}</td><td>${r.total_images}</td>
             <td style="color:var(--ok)">${r.cropped_success}</td><td>${r.cropped_unchanged}</td>
             <td style="color:${r.cropped_failed ? 'var(--err)' : 'inherit'}">${r.cropped_failed}</td>
             <td>${r.moved_to_backup} new / ${r.already_backed_up} existing</td>
             <td>${r.elapsed_seconds != null ? r.elapsed_seconds + 's' : '\u2014'}</td>`;
-        } else if (jobKind === 'autofill') {
+        } else if (kind === 'autofill') {
           tr.innerHTML = `
             <td>${escapeHtml(r.batch_name)}</td><td>${r.total_images}</td>
             <td style="color:var(--ok)">${r.filled_success}</td><td>${r.filled_unchanged}</td>
