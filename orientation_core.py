@@ -344,91 +344,153 @@ BACKUP_DIR_NAME = "QCCBackups"
 
 def _canonical_and_output_paths(batch_dir, img_path):
     """
-    Returns:
-      rel: relative path as discovered
-      output_path: working image path in batch_dir (canonical name without '_1')
-      backup_path: backup image path inside QCCBackups (with '_1' suffix)
+    Common naming convention used by all pipeline stages.
+
+    Original:
+        page001.jpg
+
+    Backup:
+        QCCBackups/page001.jpg
+
+    Processed:
+        page001_1.jpg
+
+    If page001_1.jpg is encountered on a later pipeline stage or rerun,
+    page001.jpg is treated as its canonical identity.
     """
     rel = img_path.relative_to(batch_dir)
-    canonical_stem = _SUFFIX_RE.sub('', img_path.stem)
-    
-    # Active output in batch_dir uses the canonical name (e.g., page001.jpg)
+
+    canonical_stem = _SUFFIX_RE.sub("", img_path.stem)
     canonical_rel = rel.with_name(canonical_stem + rel.suffix)
-    output_path = batch_dir / canonical_rel
-    
-    # Backup copy inside QCCBackups carries the '_1' suffix (e.g., page001_1.jpg)
-    backup_rel = rel.with_name(canonical_stem + '_1' + rel.suffix)
-    backup_path = batch_dir / BACKUP_DIR_NAME / backup_rel
-    
-    return rel, output_path, backup_path
+
+    backup_path = batch_dir / BACKUP_DIR_NAME / canonical_rel
+    output_path = batch_dir / rel.with_name(
+        canonical_stem + "_1" + rel.suffix
+    )
+
+    return rel, backup_path, output_path
 
 
-def process_batch_with_backup(batch_dir, model_paths, ollama_cfg=None,
-                              progress_cb=None, cancel_check=None, deskew=False):
-    """Backup original with '_1' suffix into QCCBackups, then process into batch_dir."""
+def process_batch_with_backup(
+    batch_dir,
+    model_paths,
+    ollama_cfg=None,
+    progress_cb=None,
+    cancel_check=None,
+    deskew=False,
+):
     batch_dir = Path(batch_dir)
+
     backup_dir = batch_dir / BACKUP_DIR_NAME
     backup_dir.mkdir(parents=True, exist_ok=True)
 
     ensemble = _load_ensemble(model_paths)
+
     image_files = list_images(batch_dir)
 
-    # De-dupe: prefer canonical plain file if both exist in batch_dir
+    #
+    # De-dupe.
+    # If both page001.jpg and page001_1.jpg exist,
+    # process only page001_1.jpg because it is the newest.
+    #
     by_canonical = {}
+
     for p in image_files:
-        canonical_stem = _SUFFIX_RE.sub('', p.stem)
-        key = str(p.relative_to(batch_dir).with_name(canonical_stem + p.suffix))
-        if key not in by_canonical or not p.stem.endswith('_1'):
+        canonical_stem = _SUFFIX_RE.sub("", p.stem)
+        key = str(
+            p.relative_to(batch_dir).with_name(
+                canonical_stem + p.suffix
+            )
+        )
+
+        if key not in by_canonical or p.stem.endswith("_1"):
             by_canonical[key] = p
+
     image_files = list(by_canonical.values())
+
     total = len(image_files)
 
     stats = {
-        'total_images': total,
-        'moved_to_backup': 0,
-        'already_backed_up': 0,
-        'rotated_success': 0,
-        'rotated_unchanged': 0,
-        'rotated_failed': 0,
-        'ollama_assisted': 0,
-        'backup_dir': str(backup_dir),
-        'errors': [],
+        "total_images": total,
+        "moved_to_backup": 0,
+        "already_backed_up": 0,
+        "rotated_success": 0,
+        "rotated_unchanged": 0,
+        "rotated_failed": 0,
+        "ollama_assisted": 0,
+        "backup_dir": str(backup_dir),
+        "errors": [],
     }
 
     for idx, img_path in enumerate(image_files, start=1):
+
         if cancel_check and cancel_check():
-            stats['cancelled_at'] = idx
+            stats["cancelled_at"] = idx
             break
 
-        rel, output_path, backup_path = _canonical_and_output_paths(batch_dir, img_path)
+        rel, backup_path, output_path = _canonical_and_output_paths(
+            batch_dir,
+            img_path,
+        )
+
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
+
+            #
+            # First run:
+            #
+            # page001.jpg
+            #      ↓
+            # QCCBackups/page001.jpg
+            #      ↓
+            # write page001_1.jpg
+            #
             if backup_path.exists():
-                stats['already_backed_up'] += 1
-                source_path = backup_path
+
+                stats["already_backed_up"] += 1
+
+                #
+                # Re-run or next pipeline stage.
+                #
+                # Use the latest processed file if it exists.
+                #
+                if output_path.exists():
+                    source_path = output_path
+                else:
+                    source_path = backup_path
+
             else:
-                # First run: Move un-suffixed file into QCCBackups under the '_1' name
+
                 shutil.move(str(img_path), str(backup_path))
-                stats['moved_to_backup'] += 1
+                stats["moved_to_backup"] += 1
                 source_path = backup_path
 
             success, status, detail = process_image(
-                str(source_path), str(output_path), ensemble, ollama_cfg, deskew=deskew
+                str(source_path),
+                str(output_path),
+                ensemble,
+                ollama_cfg,
+                deskew=deskew,
             )
+
             if not success:
-                stats['rotated_failed'] += 1
-                stats['errors'].append(f"{rel}: {detail}")
-            elif status == 'unchanged':
-                stats['rotated_unchanged'] += 1
+                stats["rotated_failed"] += 1
+                stats["errors"].append(f"{rel}: {detail}")
+
+            elif status == "unchanged":
+                stats["rotated_unchanged"] += 1
+
             else:
-                stats['rotated_success'] += 1
-                if detail and 'ollama' in detail:
-                    stats['ollama_assisted'] += 1
+                stats["rotated_success"] += 1
+
+                if detail and "ollama" in detail:
+                    stats["ollama_assisted"] += 1
+
         except Exception as e:
-            stats['rotated_failed'] += 1
-            stats['errors'].append(f"{rel}: {e}")
+            stats["rotated_failed"] += 1
+            stats["errors"].append(f"{rel}: {e}")
 
         if progress_cb:
             progress_cb(idx, total, str(rel))
