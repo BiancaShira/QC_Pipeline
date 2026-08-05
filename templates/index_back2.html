@@ -156,22 +156,11 @@
           <input type="checkbox" id="rot-updateStatus" checked>
           Update batch status in database after processing (per Settings &#8594; Pipeline)
         </label>
-        <label>Pipeline <span class="hint">(what happens after rotation finishes -- or start a different stage entirely)</span>
-          <select id="rot-pipelineMode">
-            <option value="rotation">Rotate only</option>
-            <option value="rotation,crop">Rotate &#8594; Crop</option>
-            <option value="rotation,autofill">Rotate &#8594; Auto-Fill</option>
-            <option value="rotation,crop,autofill">Apply all: Rotate &#8594; Crop &#8594; Auto-Fill</option>
-            <option value="crop">Crop only</option>
-            <option value="autofill">Auto-Fill only</option>
-            <option value="autofill,rotation">Auto-Fill &#8594; Rotate</option>
-          </select>
-        </label>
         <div class="row-actions">
           <button class="btn btn-acc2" id="rot-btnPreview">Preview selected (no changes made)</button>
-          <button class="btn btn-acc2-solid" id="rot-btnRun">Execute</button>
+          <button class="btn btn-acc2-solid" id="rot-btnRun">Run rotation &amp; write to disk</button>
         </div>
-        <p class="warn-note">Run mode moves every original image into <code>QCCBackups</code> inside its batch folder first, then rotates from that backup copy back into the image's original location. Nothing is deleted. Any additional steps chosen in "Pipeline" above run automatically afterward on the same batches -- no manual re-click needed.</p>
+        <p class="warn-note">Run mode moves every original image into <code>QCCBackups</code> inside its batch folder first, then rotates from that backup copy back into the image's original location. Nothing is deleted. If "chain to Auto-Crop" is enabled in Settings, finished batches are handed straight to the crop stage.</p>
       </section>
 
       <section class="panel rot" id="rot-panel-selective">
@@ -305,18 +294,11 @@
           <input type="checkbox" id="crop-updateStatus" checked>
           Update batch status in database after processing (per Settings &#8594; Pipeline)
         </label>
-        <label>Pipeline <span class="hint">(what happens after cropping finishes)</span>
-          <select id="crop-pipelineMode">
-            <option value="crop">Crop only</option>
-            <option value="crop,rotation">Crop &#8594; Rotate</option>
-            <option value="crop,autofill">Crop &#8594; Auto-Fill</option>
-          </select>
-        </label>
         <div class="row-actions">
           <button class="btn btn-acc" id="crop-btnPreview">Preview selected (no changes made)</button>
           <button class="btn btn-acc-solid" id="crop-btnRun">Run cropping &amp; write to disk</button>
         </div>
-        <p class="warn-note">Run mode moves every original image into <code>QCCBackups</code> inside its batch folder first, then crops from that backup copy back into the image's original location. Nothing is deleted. Any additional step chosen in "Pipeline" above runs automatically afterward on the same batches -- no manual re-click needed.</p>
+        <p class="warn-note">Run mode moves every original image into <code>QCCBackups</code> inside its batch folder first, then crops from that backup copy back into the image's original location. Nothing is deleted.</p>
       </section>
 
       <section class="panel hidden" id="crop-panel-preview">
@@ -434,18 +416,11 @@
           <input type="checkbox" id="fill-updateStatus" checked>
           Update batch status in database after processing (per Settings &#8594; Pipeline)
         </label>
-        <label>Pipeline <span class="hint">(what happens after auto-fill finishes)</span>
-          <select id="fill-pipelineMode">
-            <option value="autofill">Auto-Fill only</option>
-            <option value="autofill,rotation">Auto-Fill &#8594; Rotate</option>
-            <option value="autofill,crop">Auto-Fill &#8594; Crop</option>
-          </select>
-        </label>
         <div class="row-actions">
           <button class="btn btn-acc2" id="fill-btnPreview">Preview selected (no changes made)</button>
           <button class="btn btn-acc2-solid" id="fill-btnRun">Run auto-fill &amp; write to disk</button>
         </div>
-        <p class="warn-note">Run mode moves every original image into <code>QCCBackups</code> inside its batch folder first, then fills damage from that backup copy back into the image's original location. Nothing is deleted. Any additional step chosen in "Pipeline" above runs automatically afterward on the same batches -- no manual re-click needed.</p>
+        <p class="warn-note">Run mode moves every original image into <code>QCCBackups</code> inside its batch folder first, then fills damage from that backup copy back into the image's original location. Nothing is deleted.</p>
       </section>
 
       <section class="panel hidden" id="fill-panel-preview">

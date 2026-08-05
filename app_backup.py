@@ -90,29 +90,10 @@ def _resolve_model_paths(settings, document_type):
     return profile['model_paths'], profile['name']
 
 
-def _default_pipeline_for(kind, settings):
-    """Backward-compat default: only 'rotation' auto-chains, and only via the
-    old single-hop settings['scheduler']['rotation_next']. This is what
-    scheduler-triggered and check-now runs still use, since they never pass
-    an explicit `pipeline`. Manual UI runs always pass `pipeline` explicitly
-    and override this."""
-    if kind == 'rotation':
-        rotation_next = settings.get('scheduler', {}).get('rotation_next', 'none')
-        if rotation_next in ('crop', 'autofill'):
-            return ['rotation', rotation_next]
-    return [kind]
-
-
 def _run_job(job_id, kind, batches, threshold, update_status, db_creds, settings, trigger_label, extra_params):
     with JOBS_LOCK:
         job = JOBS[job_id]
         job['trigger'] = trigger_label
-        # Pipeline = ordered list of stages to run in sequence, e.g.
-        # ['rotation', 'crop', 'autofill'] or ['crop', 'rotation']. Passed in
-        # explicitly by the UI's per-panel "Pipeline" selector; falls back to
-        # the legacy single-hop rotation_next setting when absent (scheduler/
-        # check-now runs).
-        job['pipeline'] = extra_params.get('pipeline') or _default_pipeline_for(kind, settings)
     ACTIVE_STAGE_JOB[kind] = job_id
     pipeline_cfg = settings['pipeline'][kind]
     ollama_cfg = settings.get('ollama')
@@ -236,34 +217,16 @@ def _run_job(job_id, kind, batches, threshold, update_status, db_creds, settings
         logger.warning(f"Failed to persist report for job {job_id}: {e}")
 
     # -------------------------------------------------------------------------
-    # Pipeline chaining -- generic, arbitrary-order, N-step version of the old
-    # rotation-only branching. job['pipeline'] is an ordered list of stages,
-    # e.g. ['rotation'], ['crop', 'rotation'], or
-    # ['rotation', 'crop', 'autofill'] (apply all). If the stage that just
-    # finished has a next entry in that list, hand the completed batches
-    # straight to it -- same backup-then-write-in-place semantics, chained
-    # automatically with no manual re-click needed.
+    # Rotation branching -- single explicit choice instead of two checkboxes.
+    # settings['scheduler']['rotation_next'] is one of: "none", "crop", "autofill".
     # -------------------------------------------------------------------------
-    pipeline = job.get('pipeline') or [kind]
-    try:
-        step_idx = pipeline.index(kind)
-    except ValueError:
-        step_idx = -1
-
-    if job['status'] == 'done' and completed_batches and step_idx != -1 and step_idx + 1 < len(pipeline):
-        next_kind = pipeline[step_idx + 1]
-        _log(job, f"Chaining {len(completed_batches)} batch(es) into {next_kind} "
-                   f"(pipeline: {' \u2192 '.join(pipeline)})...")
-        next_threshold = (settings.get('_chain_crop_threshold', 100) if next_kind == 'crop'
-                         else settings.get('_chain_fill_threshold', 60) if next_kind == 'autofill' else 100)
-        next_extra_params = {'pipeline': pipeline}
-        if next_kind == 'rotation':
-            # Only meaningful if rotation is further down the chain (e.g.
-            # crop -> rotation); carry the original deskew choice along.
-            next_extra_params['deskew'] = extra_params.get('deskew', False)
-        _start_job(next_kind, completed_batches, next_threshold, update_status, db_creds,
-                   config_store.load(), trigger_label=f"chained from {kind} job {job_id} (pipeline)",
-                   extra_params=next_extra_params)
+    rotation_next = settings.get('scheduler', {}).get('rotation_next', 'none')
+    if kind == 'rotation' and job['status'] == 'done' and completed_batches and rotation_next in ('crop', 'autofill'):
+        _log(job, f"Chaining {len(completed_batches)} batch(es) into {rotation_next}...")
+        next_threshold = (settings.get('_chain_crop_threshold', 100) if rotation_next == 'crop'
+                         else settings.get('_chain_fill_threshold', 60))
+        _start_job(rotation_next, completed_batches, next_threshold, update_status, db_creds,
+                   config_store.load(), trigger_label=f"chained from rotation job {job_id}", extra_params={})
 
 
 def _start_job(kind, batches, threshold, update_status, db_creds, settings, trigger_label='manual', extra_params=None):
@@ -600,23 +563,6 @@ def api_run_start():
     extra_params = {}
     if kind == 'rotation':
         extra_params['deskew'] = data.get('deskew', False)
-
-    # Optional multi-stage pipeline, e.g. ["rotation", "crop", "autofill"] or
-    # ["crop", "rotation"]. Each stage runs to completion, backs up + writes
-    # in place as normal, then automatically hands its completed batches to
-    # the next stage in the list -- no manual re-click required.
-    pipeline = data.get('pipeline')
-    if pipeline is not None:
-        valid_stages = ('rotation', 'crop', 'autofill')
-        if (not isinstance(pipeline, list) or not pipeline
-                or any(p not in valid_stages for p in pipeline)
-                or len(set(pipeline)) != len(pipeline)):
-            return jsonify({'ok': False, 'error':
-                            "pipeline must be a list of unique stages from "
-                            "'rotation', 'crop', 'autofill'"}), 400
-        if pipeline[0] != kind:
-            return jsonify({'ok': False, 'error': "pipeline[0] must match kind"}), 400
-        extra_params['pipeline'] = pipeline
 
     if not batches:
         return jsonify({'ok': False, 'error': 'No batches supplied'}), 400
