@@ -334,6 +334,34 @@ def generate_preview(batch_dir, model_paths, sample_size=6, ollama_cfg=None, des
 # ---------------------------------------------------------------------------
 # Live run: backup-then-rotate
 # ---------------------------------------------------------------------------
+import re
+
+_SUFFIX_RE = re.compile(r'_1$')
+
+
+def _canonical_and_output_paths(batch_dir, img_path):
+    """Given a discovered image path (which may already carry the '_1'
+    "processed" suffix from an earlier run or an earlier pipeline stage),
+    work out:
+
+      - rel:            path relative to batch_dir, as found
+      - canonical_rel:  the image's TRUE identity, with any existing '_1'
+                         suffix stripped off. This is what we key the
+                         backup off of, so re-runs and chained pipeline
+                         stages (rotate -> crop -> autofill) always back up
+                         / detect the same true original, no matter how
+                         many times it's already been processed.
+      - output_path:    where the processed result gets written -- always
+                         canonical name + '_1', so re-processing overwrites
+                         that same file in place instead of stacking
+                         suffixes (page003_1_1_1.jpg).
+    """
+    rel = img_path.relative_to(batch_dir)
+    canonical_stem = _SUFFIX_RE.sub('', img_path.stem)
+    canonical_rel = rel.with_name(canonical_stem + rel.suffix)
+    output_path = batch_dir / rel.with_name(canonical_stem + '_1' + rel.suffix)
+    return rel, canonical_rel, output_path
+
 
 def process_batch_with_backup(batch_dir, model_paths, ollama_cfg=None,
                               progress_cb=None, cancel_check=None, deskew=False):
@@ -343,6 +371,18 @@ def process_batch_with_backup(batch_dir, model_paths, ollama_cfg=None,
 
     ensemble = _load_ensemble(model_paths)
     image_files = list_images(batch_dir)
+
+    # De-dupe: if both a plain original and its already-processed "_1"
+    # sibling somehow both exist in the folder, prefer the "_1" version --
+    # it reflects the latest processed state -- so we don't process the
+    # same logical image twice in one run.
+    by_canonical = {}
+    for p in image_files:
+        canonical_stem = _SUFFIX_RE.sub('', p.stem)
+        key = str(p.relative_to(batch_dir).with_name(canonical_stem + p.suffix))
+        if key not in by_canonical or p.stem.endswith('_1'):
+            by_canonical[key] = p
+    image_files = list(by_canonical.values())
     total = len(image_files)
 
     stats = {
@@ -362,18 +402,23 @@ def process_batch_with_backup(batch_dir, model_paths, ollama_cfg=None,
             stats['cancelled_at'] = idx
             break
 
-        rel = img_path.relative_to(batch_dir)
-        backup_path = backup_dir / rel
+        rel, canonical_rel, output_path = _canonical_and_output_paths(batch_dir, img_path)
+        backup_path = backup_dir / canonical_rel
         backup_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             if backup_path.exists():
                 stats['already_backed_up'] += 1
+                source_path = img_path      # already-processed "_1" file (re-run / chained stage)
             else:
                 shutil.move(str(img_path), str(backup_path))
                 stats['moved_to_backup'] += 1
+                source_path = backup_path   # first time: pristine original just moved here
 
-            success, status, detail = process_image(str(backup_path), str(img_path), ensemble, ollama_cfg, deskew=deskew)
+            success, status, detail = process_image(
+                str(source_path), str(output_path), ensemble, ollama_cfg, deskew=deskew
+            )
             if not success:
                 stats['rotated_failed'] += 1
                 stats['errors'].append(f"{rel}: {detail}")
