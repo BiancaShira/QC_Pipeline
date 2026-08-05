@@ -17,9 +17,9 @@ from cropping_core import BACKUP_DIR_NAME, IMAGE_EXTS, list_images, make_thumb_b
 
 logger = logging.getLogger("qcc_autocrop")
 
-DARK_THRESHOLD = 45
+DARK_THRESHOLD = 48
 MAX_BLOB_AREA_RATIO = 0.35
-FILL_COLOR = (255, 255, 255)
+FILL_COLOR = (255,255,255)  # white in BGR
 
 
 def fill_damage(image_path, output_path, dark_threshold=DARK_THRESHOLD,
@@ -62,7 +62,7 @@ def fill_damage(image_path, output_path, dark_threshold=DARK_THRESHOLD,
                 return True, "unchanged", "no fillable blobs"
 
             # Dilate mask
-            safe_mask = cv2.dilate(safe_mask, np.ones((5, 5), np.uint8), iterations=1)
+            safe_mask = cv2.dilate(safe_mask, np.ones((2, 2), np.uint8), iterations=1)
 
             # Apply fill
             result_bgr = img_bgr.copy()

@@ -198,7 +198,7 @@ def prepare_backup_folders(batches):
 # Preview (read-only)
 # ---------------------------------------------------------------------------
 
-def generate_preview(batch_dir, threshold=100, sample_size=6):
+def generate_preview(batch_dir, threshold=150, sample_size=6):
     batch_dir = Path(batch_dir)
     images = list_images(batch_dir)
     sample = images[:max(0, sample_size)]
@@ -233,7 +233,7 @@ def generate_preview(batch_dir, threshold=100, sample_size=6):
 # Live run: backup-then-crop
 # ---------------------------------------------------------------------------
 
-# def process_batch_with_backup(batch_dir, threshold=100, progress_cb=None, cancel_check=None):
+# def process_batch_with_backup(batch_dir, threshold=150, progress_cb=None, cancel_check=None):
 #     batch_dir = Path(batch_dir)
 #     backup_dir = batch_dir / BACKUP_DIR_NAME
 #     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -413,8 +413,7 @@ def _canonical_and_output_paths(batch_dir, img_path):
     return rel, output_path, backup_path
 
 
-def process_batch_with_backup(batch_dir, threshold=100, progress_cb=None, cancel_check=None):
-    """Backup original with '_1' suffix into QCCBackups, then process into batch_dir."""
+def process_batch_with_backup(batch_dir, threshold=150, progress_cb=None, cancel_check=None):
     batch_dir = Path(batch_dir)
     backup_dir = batch_dir / BACKUP_DIR_NAME
     backup_dir.mkdir(parents=True, exist_ok=True)
