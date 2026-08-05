@@ -24,7 +24,7 @@
       "name": "SF24-Model-103",
       "match": "SF24-Model-103",
       "model_paths": [
-        "G:\\auto_orientation_master\\Model\\Model\\best_model.pth"
+        "/home/kabwoy/Desktop/disi-projects/qcc-v3/QC_Pipeline/Model/best_model.pth"
       ]
     }
   ],
