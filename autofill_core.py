@@ -1,104 +1,145 @@
 """
 autofill_core.py
 ----------------
-Auto-Fill stage: fill small black damage patches with solid white.
-Uses PIL for robust image reading, converts to numpy for OpenCV processing.
+Auto-Fill stage: fill outer torn corners and hole-punch damage patches with solid white
+without eroding interior text or table gridlines.
 """
 import cv2
 import numpy as np
 import shutil
-import tempfile
 from pathlib import Path
 from PIL import Image
 import logging
-import os
+import re
 
-from cropping_core import BACKUP_DIR_NAME, IMAGE_EXTS, list_images, make_thumb_b64
+from cropping_core import BACKUP_DIR_NAME, list_images, make_thumb_b64
 
 logger = logging.getLogger("qcc_autocrop")
 
-DARK_THRESHOLD = 48
-MAX_BLOB_AREA_RATIO = 0.35
-FILL_COLOR = (255,255,255)  # white in BGR
+DARK_THRESHOLD = 48          # Base dark cutoff
+MIN_BLOB_AREA = 20           # Minimum area to skip JPEG noise specks
+MAX_BLOB_AREA_RATIO = 0.35   # Maximum safe ratio cap for flat white fill
+FILL_COLOR = (255, 255, 255) # White in BGR
+_SUFFIX_RE = re.compile(r'_1$')
+BACKUP_DIR_NAME = "QCCBackups"
+
+
+def get_dpi(src_path, default=(300, 300)):
+    """Extract DPI resolution metadata from source image using PIL."""
+    try:
+        with Image.open(src_path) as im:
+            dpi = im.info.get("dpi")
+            if dpi:
+                return dpi
+    except Exception:
+        pass
+    return default
+
+
+def save_with_dpi(cv2_img_bgr, out_path, dpi=(300, 300)):
+    """Save a cv2 (BGR numpy array) image to out_path preserving DPI metadata."""
+    rgb = cv2.cvtColor(cv2_img_bgr, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(rgb)
+    pil_img.save(out_path, dpi=dpi, quality=95)
 
 
 def fill_damage(image_path, output_path, dark_threshold=DARK_THRESHOLD,
-                max_blob_ratio=MAX_BLOB_AREA_RATIO):
+                max_blob_ratio=MAX_BLOB_AREA_RATIO, min_blob_area=MIN_BLOB_AREA):
     """
-    Apply white fill to black damage blobs.
-    Uses PIL to read the image, then cv2 for processing.
-    Returns (success, status, detail) where status is 'filled', 'unchanged', or 'error'.
+    Target outer edge damage patches (hole punches, torn corners) and fill solid white.
+    Filters out internal dark text/lines to prevent erosion.
     """
     try:
-        # Open with PIL to support all formats
+        dpi = get_dpi(image_path)
+        
         with Image.open(image_path) as pil_img:
-            # Get DPI early
-            dpi = pil_img.info.get('dpi', (300, 300))
-            # Convert to RGB (or keep as is) and get numpy array
             frame = pil_img.convert('RGB')
-            img_np = np.array(frame)  # shape (h,w,3) RGB
-            # Convert RGB to BGR for OpenCV
+            img_np = np.array(frame)
             img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
             orig_h, orig_w = img_bgr.shape[:2]
 
-            # ---- damage detection ----
             gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+            
+            # 1. Dark threshold to capture dark damage regions
             _, dark_mask = cv2.threshold(gray, dark_threshold, 255, cv2.THRESH_BINARY_INV)
 
+            # 2. Connected components inspection
             n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(dark_mask, connectivity=8)
             safe_mask = np.zeros_like(dark_mask)
-            kept = 0
+
+            # Edge boundary margin (pixels from image border to identify hole-punch/corner damage)
+            margin = 30  
+            skipped_small = 0
+            skipped_large = 0
+            skipped_interior = 0
+            kept_blobs = 0
 
             for i in range(1, n_labels):
                 area = stats[i, cv2.CC_STAT_AREA]
-                if area / (orig_w * orig_h) > max_blob_ratio:
+                x = stats[i, cv2.CC_STAT_LEFT]
+                y = stats[i, cv2.CC_STAT_TOP]
+                w = stats[i, cv2.CC_STAT_WIDTH]
+                h = stats[i, cv2.CC_STAT_HEIGHT]
+
+                if area < min_blob_area:
+                    skipped_small += 1
                     continue
+                
+                if area / (orig_w * orig_h) > max_blob_ratio:
+                    skipped_large += 1
+                    continue
+
+                # Check if the blob touches or sits near any page boundary
+                is_on_edge = (x <= margin or y <= margin or 
+                              (x + w) >= (orig_w - margin) or 
+                              (y + h) >= (orig_h - margin))
+
+                if not is_on_edge:
+                    # Skip internal blobs (text, table gridlines, handwriting)
+                    skipped_interior += 1
+                    continue
+
                 safe_mask[labels == i] = 255
-                kept += 1
+                kept_blobs += 1
 
-            if kept == 0:
-                # No damage: copy original unchanged
-                pil_img.save(output_path, dpi=dpi, quality=95)
-                return True, "unchanged", "no fillable blobs"
+            if kept_blobs == 0:
+                save_with_dpi(img_bgr, output_path, dpi=dpi)
+                return True, "unchanged", f"no outer damage found (skipped {skipped_small} noise, {skipped_interior} interior text)"
 
-            # Dilate mask
-            safe_mask = cv2.dilate(safe_mask, np.ones((2, 2), np.uint8), iterations=1)
+            # 3. Dilate mask slightly to feather outer hole edge halos
+            safe_mask = cv2.dilate(safe_mask, np.ones((5, 5), np.uint8), iterations=1)
 
-            # Apply fill
+            # 4. Fill identified damage regions with flat white
             result_bgr = img_bgr.copy()
             result_bgr[safe_mask == 255] = FILL_COLOR
 
-            # Convert back to RGB PIL image
-            result_rgb = cv2.cvtColor(result_bgr, cv2.COLOR_BGR2RGB)
-            result_pil = Image.fromarray(result_rgb)
-            result_pil.save(output_path, dpi=dpi, quality=95)
+            # 5. Save with preserved DPI
+            save_with_dpi(result_bgr, output_path, dpi=dpi)
 
-            return True, "filled", f"filled {kept} blob(s)"
+            return True, "filled", f"filled {kept_blobs} edge blob(s) (skipped {skipped_interior} interior text blobs)"
+
     except Exception as e:
         return False, "error", str(e)
 
 
 def generate_preview(batch_dir, threshold=DARK_THRESHOLD, sample_size=6):
-    """Read‑only preview: returns before/after thumbnails for a sample."""
+    """Read-only preview: returns before/after thumbnails for a sample."""
     batch_dir = Path(batch_dir)
     images = list_images(batch_dir)
     sample = images[:max(0, sample_size)]
     previews = []
 
-    # Create a temporary directory for output files (inside batch dir to avoid permission issues)
     temp_dir = batch_dir / "__autofill_temp__"
     temp_dir.mkdir(exist_ok=True)
 
     try:
         for p in sample:
             try:
-                # Get the "before" thumbnail directly from PIL
                 with Image.open(p) as im:
                     im.seek(0)
                     frame = im.convert('RGB') if im.mode != 'RGB' else im.copy()
                     before_b64 = make_thumb_b64(frame)
 
-                # Output file inside temp dir with same name but .jpg extension
                 out_path = temp_dir / (p.stem + ".jpg")
                 success, status, detail = fill_damage(str(p), str(out_path), threshold)
                 if not success:
@@ -119,11 +160,7 @@ def generate_preview(batch_dir, threshold=DARK_THRESHOLD, sample_size=6):
             except Exception as e:
                 previews.append({'filename': p.name, 'status': 'error', 'error': str(e)})
     finally:
-        # Clean up temp directory
-        try:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        except Exception:
-            pass
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     return {
         'batch_directory': str(batch_dir),
@@ -132,53 +169,34 @@ def generate_preview(batch_dir, threshold=DARK_THRESHOLD, sample_size=6):
         'previews': previews,
     }
 
-# import re
-
-# _SUFFIX_RE = re.compile(r'_1$')
-
 
 # def _canonical_and_output_paths(batch_dir, img_path):
-#     """Given a discovered image path (which may already carry the '_1'
-#     "processed" suffix from an earlier run or an earlier pipeline stage),
-#     work out:
-
-#       - rel:            path relative to batch_dir, as found
-#       - canonical_rel:  the image's TRUE identity, with any existing '_1'
-#                          suffix stripped off. This is what we key the
-#                          backup off of, so re-runs and chained pipeline
-#                          stages (rotate -> crop -> autofill) always back up
-#                          / detect the same true original, no matter how
-#                          many times it's already been processed.
-#       - output_path:    where the processed result gets written -- always
-#                          canonical name + '_1', so re-processing overwrites
-#                          that same file in place instead of stacking
-#                          suffixes (page003_1_1_1.jpg).
-#     """
 #     rel = img_path.relative_to(batch_dir)
 #     canonical_stem = _SUFFIX_RE.sub('', img_path.stem)
+    
 #     canonical_rel = rel.with_name(canonical_stem + rel.suffix)
-#     output_path = batch_dir / rel.with_name(canonical_stem + '_1' + rel.suffix)
-#     return rel, canonical_rel, output_path
+#     output_path = batch_dir / canonical_rel
+    
+#     backup_rel = rel.with_name(canonical_stem + '_1' + rel.suffix)
+#     backup_path = batch_dir / BACKUP_DIR_NAME / backup_rel
+    
+#     return rel, output_path, backup_path
 
 
 # def process_batch_with_backup(batch_dir, threshold=DARK_THRESHOLD,
 #                               progress_cb=None, cancel_check=None):
-#     """Backup then fill damage for each image in batch_dir."""
+#     """Backup original with '_1' suffix into QCCBackups, then process into batch_dir."""
 #     batch_dir = Path(batch_dir)
 #     backup_dir = batch_dir / BACKUP_DIR_NAME
 #     backup_dir.mkdir(parents=True, exist_ok=True)
 
 #     image_files = list_images(batch_dir)
 
-#     # De-dupe: if both a plain original and its already-processed "_1"
-#     # sibling somehow both exist in the folder, prefer the "_1" version --
-#     # it reflects the latest processed state -- so we don't process the
-#     # same logical image twice in one run.
 #     by_canonical = {}
 #     for p in image_files:
 #         canonical_stem = _SUFFIX_RE.sub('', p.stem)
 #         key = str(p.relative_to(batch_dir).with_name(canonical_stem + p.suffix))
-#         if key not in by_canonical or p.stem.endswith('_1'):
+#         if key not in by_canonical or not p.stem.endswith('_1'):
 #             by_canonical[key] = p
 #     image_files = list(by_canonical.values())
 #     total = len(image_files)
@@ -199,21 +217,21 @@ def generate_preview(batch_dir, threshold=DARK_THRESHOLD, sample_size=6):
 #             stats['cancelled_at'] = idx
 #             break
 
-#         rel, canonical_rel, output_path = _canonical_and_output_paths(batch_dir, img_path)
-#         backup_path = backup_dir / canonical_rel
+#         rel, output_path, backup_path = _canonical_and_output_paths(batch_dir, img_path)
 #         backup_path.parent.mkdir(parents=True, exist_ok=True)
 #         output_path.parent.mkdir(parents=True, exist_ok=True)
 
 #         try:
 #             if backup_path.exists():
 #                 stats['already_backed_up'] += 1
-#                 source_path = img_path      # already-processed "_1" file (re-run / chained stage)
+#                 source_path = backup_path
 #             else:
 #                 shutil.move(str(img_path), str(backup_path))
 #                 stats['moved_to_backup'] += 1
-#                 source_path = backup_path   # first time: pristine original just moved here
+#                 source_path = backup_path
 
 #             success, status, detail = fill_damage(str(source_path), str(output_path), threshold)
+            
 #             if not success:
 #                 stats['filled_failed'] += 1
 #                 stats['errors'].append(f"{rel}: {detail}")
@@ -223,104 +241,174 @@ def generate_preview(batch_dir, threshold=DARK_THRESHOLD, sample_size=6):
 #                 stats['filled_success'] += 1
 #         except Exception as e:
 #             stats['filled_failed'] += 1
-#             stats['errors'].append(f"{rel}: {e}")
+#             stats['errors'].append(f"{rel}: {str(e)}")
 
 #         if progress_cb:
 #             progress_cb(idx, total, str(rel))
 
 #     return stats
 
+
 import shutil
 from pathlib import Path
 import re
 
-_SUFFIX_RE = re.compile(r'_1$')
+_SUFFIX_RE = re.compile(r"_1$")
 BACKUP_DIR_NAME = "QCCBackups"
 
 
 def _canonical_and_output_paths(batch_dir, img_path):
     """
-    Returns:
-      rel: relative path as discovered
-      output_path: working image path in batch_dir (canonical name without '_1')
-      backup_path: backup image path inside backup_dir (with '_1' suffix)
+    Common naming convention used by all pipeline stages.
+
+    Original:
+        page001.jpg
+
+    Backup:
+        QCCBackups/page001_1.jpg
+
+    Working image:
+        page001.jpg
+
+    If page001.jpg is processed again, the existing backup is reused and
+    the working image is overwritten.
     """
     rel = img_path.relative_to(batch_dir)
-    canonical_stem = _SUFFIX_RE.sub('', img_path.stem)
-    
-    # Active output in batch_dir uses the canonical name (page001.jpg)
+
+    canonical_stem = _SUFFIX_RE.sub("", img_path.stem)
     canonical_rel = rel.with_name(canonical_stem + rel.suffix)
+
+    # Working image (always original filename)
     output_path = batch_dir / canonical_rel
-    
-    # Backup copy in _backup/ uses the '_1' suffix (page001_1.jpg)
-    backup_rel = rel.with_name(canonical_stem + '_1' + rel.suffix)
-    backup_path = batch_dir / BACKUP_DIR_NAME / backup_rel
-    
+
+    # Backup (always _1)
+    backup_path = (
+        batch_dir
+        / BACKUP_DIR_NAME
+        / rel.with_name(canonical_stem + "_1" + rel.suffix)
+    )
+
     return rel, output_path, backup_path
 
 
-def process_batch_with_backup(batch_dir, threshold=DARK_THRESHOLD,
-                              progress_cb=None, cancel_check=None):
-    """Backup original with '_1' suffix into _backup, then process into batch_dir."""
+def process_batch_with_backup(
+    batch_dir,
+    threshold=DARK_THRESHOLD,
+    progress_cb=None,
+    cancel_check=None,
+):
+    """
+    Backup original into QCCBackups/page001_1.jpg
+
+    Working folder always contains:
+
+        page001.jpg
+    """
+
     batch_dir = Path(batch_dir)
+
     backup_dir = batch_dir / BACKUP_DIR_NAME
     backup_dir.mkdir(parents=True, exist_ok=True)
 
     image_files = list_images(batch_dir)
 
-    # De-dupe: prefer canonical file if both exist in batch_dir
+    #
+    # De-dupe.
+    # If both page001.jpg and page001_1.jpg somehow exist,
+    # prefer page001.jpg because that's the working image.
+    #
     by_canonical = {}
+
     for p in image_files:
-        canonical_stem = _SUFFIX_RE.sub('', p.stem)
-        key = str(p.relative_to(batch_dir).with_name(canonical_stem + p.suffix))
-        if key not in by_canonical or not p.stem.endswith('_1'):
+        canonical_stem = _SUFFIX_RE.sub("", p.stem)
+        key = str(
+            p.relative_to(batch_dir).with_name(
+                canonical_stem + p.suffix
+            )
+        )
+
+        if key not in by_canonical or not p.stem.endswith("_1"):
             by_canonical[key] = p
+
     image_files = list(by_canonical.values())
+
     total = len(image_files)
 
     stats = {
-        'total_images': total,
-        'moved_to_backup': 0,
-        'already_backed_up': 0,
-        'filled_success': 0,
-        'filled_unchanged': 0,
-        'filled_failed': 0,
-        'backup_dir': str(backup_dir),
-        'errors': [],
+        "total_images": total,
+        "moved_to_backup": 0,
+        "already_backed_up": 0,
+        "filled_success": 0,
+        "filled_unchanged": 0,
+        "filled_failed": 0,
+        "backup_dir": str(backup_dir),
+        "errors": [],
     }
 
     for idx, img_path in enumerate(image_files, start=1):
+
         if cancel_check and cancel_check():
-            stats['cancelled_at'] = idx
+            stats["cancelled_at"] = idx
             break
 
-        rel, output_path, backup_path = _canonical_and_output_paths(batch_dir, img_path)
+        rel, output_path, backup_path = _canonical_and_output_paths(
+            batch_dir,
+            img_path,
+        )
+
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
+
+            #
+            # First run
+            #
             if backup_path.exists():
-                stats['already_backed_up'] += 1
-                # Backup exists; read original from backup to re-process into batch_dir
-                source_path = backup_path
+
+                stats["already_backed_up"] += 1
+
+                #
+                # Re-run or later pipeline stage.
+                # Process the latest working image if present.
+                #
+                if output_path.exists():
+                    source_path = output_path
+                else:
+                    source_path = backup_path
+
             else:
-                # First run: Move un-suffix original file into backup under '_1' name
+
+                #
+                # Preserve the original once.
+                #
                 shutil.move(str(img_path), str(backup_path))
-                stats['moved_to_backup'] += 1
+                stats["moved_to_backup"] += 1
+
+                #
+                # First processing starts from the original.
+                #
                 source_path = backup_path
 
-            success, status, detail = fill_damage(str(source_path), str(output_path), threshold)
-            
+            success, status, detail = fill_damage(
+                str(source_path),
+                str(output_path),
+                threshold,
+            )
+
             if not success:
-                stats['filled_failed'] += 1
-                stats['errors'].append(f"{rel}: {detail}")
-            elif status == 'unchanged':
-                stats['filled_unchanged'] += 1
+                stats["filled_failed"] += 1
+                stats["errors"].append(f"{rel}: {detail}")
+
+            elif status == "unchanged":
+                stats["filled_unchanged"] += 1
+
             else:
-                stats['filled_success'] += 1
+                stats["filled_success"] += 1
+
         except Exception as e:
-            stats['filled_failed'] += 1
-            stats['errors'].append(f"{rel}: {e}")
+            stats["filled_failed"] += 1
+            stats["errors"].append(f"{rel}: {e}")
 
         if progress_cb:
             progress_cb(idx, total, str(rel))
