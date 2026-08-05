@@ -288,51 +288,145 @@ def generate_preview(batch_dir, threshold=100, sample_size=6):
 #     return stats
 
 
+# import re
+
+# _SUFFIX_RE = re.compile(r'_1$')
+
+
+# def _canonical_and_output_paths(batch_dir, img_path):
+#     """Given a discovered image path (which may already carry the '_1'
+#     "processed" suffix from an earlier run or an earlier pipeline stage),
+#     work out:
+
+#       - rel:            path relative to batch_dir, as found
+#       - canonical_rel:  the image's TRUE identity, with any existing '_1'
+#                          suffix stripped off. This is what we key the
+#                          backup off of, so re-runs and chained pipeline
+#                          stages (rotate -> crop -> autofill) always back up
+#                          / detect the same true original, no matter how
+#                          many times it's already been processed.
+#       - output_path:    where the processed result gets written -- always
+#                          canonical name + '_1', so re-processing overwrites
+#                          that same file in place instead of stacking
+#                          suffixes (page003_1_1_1.jpg).
+#     """
+#     rel = img_path.relative_to(batch_dir)
+#     canonical_stem = _SUFFIX_RE.sub('', img_path.stem)
+#     canonical_rel = rel.with_name(canonical_stem + rel.suffix)
+#     output_path = batch_dir / rel.with_name(canonical_stem + '_1' + rel.suffix)
+#     return rel, canonical_rel, output_path
+
+
+# def process_batch_with_backup(batch_dir, threshold=100, progress_cb=None, cancel_check=None):
+#     batch_dir = Path(batch_dir)
+#     backup_dir = batch_dir / BACKUP_DIR_NAME
+#     backup_dir.mkdir(parents=True, exist_ok=True)
+
+#     image_files = list_images(batch_dir)
+
+#     # De-dupe: if both a plain original and its already-processed "_1"
+#     # sibling somehow both exist in the folder, prefer the "_1" version --
+#     # it reflects the latest processed state -- so we don't process the
+#     # same logical image twice in one run.
+#     by_canonical = {}
+#     for p in image_files:
+#         canonical_stem = _SUFFIX_RE.sub('', p.stem)
+#         key = str(p.relative_to(batch_dir).with_name(canonical_stem + p.suffix))
+#         if key not in by_canonical or p.stem.endswith('_1'):
+#             by_canonical[key] = p
+#     image_files = list(by_canonical.values())
+#     total = len(image_files)
+
+#     stats = {
+#         'total_images': total,
+#         'moved_to_backup': 0,
+#         'already_backed_up': 0,
+#         'cropped_success': 0,
+#         'cropped_unchanged': 0,
+#         'cropped_failed': 0,
+#         'backup_dir': str(backup_dir),
+#         'errors': [],
+#     }
+
+#     for idx, img_path in enumerate(image_files, start=1):
+#         if cancel_check and cancel_check():
+#             stats['cancelled_at'] = idx
+#             break
+
+#         rel, canonical_rel, output_path = _canonical_and_output_paths(batch_dir, img_path)
+#         backup_path = backup_dir / canonical_rel
+#         backup_path.parent.mkdir(parents=True, exist_ok=True)
+#         output_path.parent.mkdir(parents=True, exist_ok=True)
+
+#         try:
+#             if backup_path.exists():
+#                 stats['already_backed_up'] += 1
+#                 source_path = img_path      # already-processed "_1" file (re-run / chained stage)
+#             else:
+#                 shutil.move(str(img_path), str(backup_path))
+#                 stats['moved_to_backup'] += 1
+#                 source_path = backup_path   # first time: pristine original just moved here
+
+#             success, msg = remove_black_borders(str(source_path), str(output_path), threshold=threshold)
+#             if not success:
+#                 stats['cropped_failed'] += 1
+#                 stats['errors'].append(f"{rel}: {msg}")
+#             elif msg and msg.startswith("UNCHANGED:"):
+#                 stats['cropped_unchanged'] += 1
+#             else:
+#                 stats['cropped_success'] += 1
+#         except Exception as e:
+#             stats['cropped_failed'] += 1
+#             stats['errors'].append(f"{rel}: {str(e)}")
+
+#         if progress_cb:
+#             progress_cb(idx, total, str(rel))
+
+#     return stats
+
+import shutil
+from pathlib import Path
 import re
 
 _SUFFIX_RE = re.compile(r'_1$')
+BACKUP_DIR_NAME = "QCCBackups"
 
 
 def _canonical_and_output_paths(batch_dir, img_path):
-    """Given a discovered image path (which may already carry the '_1'
-    "processed" suffix from an earlier run or an earlier pipeline stage),
-    work out:
-
-      - rel:            path relative to batch_dir, as found
-      - canonical_rel:  the image's TRUE identity, with any existing '_1'
-                         suffix stripped off. This is what we key the
-                         backup off of, so re-runs and chained pipeline
-                         stages (rotate -> crop -> autofill) always back up
-                         / detect the same true original, no matter how
-                         many times it's already been processed.
-      - output_path:    where the processed result gets written -- always
-                         canonical name + '_1', so re-processing overwrites
-                         that same file in place instead of stacking
-                         suffixes (page003_1_1_1.jpg).
+    """
+    Returns:
+      rel: relative path as discovered
+      output_path: working image path in batch_dir (canonical name without '_1')
+      backup_path: backup image path inside QCCBackups (with '_1' suffix)
     """
     rel = img_path.relative_to(batch_dir)
     canonical_stem = _SUFFIX_RE.sub('', img_path.stem)
+    
+    # Active output in batch_dir uses the canonical name (e.g., page001.jpg)
     canonical_rel = rel.with_name(canonical_stem + rel.suffix)
-    output_path = batch_dir / rel.with_name(canonical_stem + '_1' + rel.suffix)
-    return rel, canonical_rel, output_path
+    output_path = batch_dir / canonical_rel
+    
+    # Backup copy inside QCCBackups carries the '_1' suffix (e.g., page001_1.jpg)
+    backup_rel = rel.with_name(canonical_stem + '_1' + rel.suffix)
+    backup_path = batch_dir / BACKUP_DIR_NAME / backup_rel
+    
+    return rel, output_path, backup_path
 
 
 def process_batch_with_backup(batch_dir, threshold=100, progress_cb=None, cancel_check=None):
+    """Backup original with '_1' suffix into QCCBackups, then process into batch_dir."""
     batch_dir = Path(batch_dir)
     backup_dir = batch_dir / BACKUP_DIR_NAME
     backup_dir.mkdir(parents=True, exist_ok=True)
 
     image_files = list_images(batch_dir)
 
-    # De-dupe: if both a plain original and its already-processed "_1"
-    # sibling somehow both exist in the folder, prefer the "_1" version --
-    # it reflects the latest processed state -- so we don't process the
-    # same logical image twice in one run.
+    # De-dupe: prefer canonical plain file if both exist in batch_dir
     by_canonical = {}
     for p in image_files:
         canonical_stem = _SUFFIX_RE.sub('', p.stem)
         key = str(p.relative_to(batch_dir).with_name(canonical_stem + p.suffix))
-        if key not in by_canonical or p.stem.endswith('_1'):
+        if key not in by_canonical or not p.stem.endswith('_1'):
             by_canonical[key] = p
     image_files = list(by_canonical.values())
     total = len(image_files)
@@ -353,19 +447,19 @@ def process_batch_with_backup(batch_dir, threshold=100, progress_cb=None, cancel
             stats['cancelled_at'] = idx
             break
 
-        rel, canonical_rel, output_path = _canonical_and_output_paths(batch_dir, img_path)
-        backup_path = backup_dir / canonical_rel
+        rel, output_path, backup_path = _canonical_and_output_paths(batch_dir, img_path)
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             if backup_path.exists():
                 stats['already_backed_up'] += 1
-                source_path = img_path      # already-processed "_1" file (re-run / chained stage)
+                source_path = backup_path
             else:
+                # First run: Move un-suffixed file into QCCBackups under the '_1' name
                 shutil.move(str(img_path), str(backup_path))
                 stats['moved_to_backup'] += 1
-                source_path = backup_path   # first time: pristine original just moved here
+                source_path = backup_path
 
             success, msg = remove_black_borders(str(source_path), str(output_path), threshold=threshold)
             if not success:
